@@ -31,12 +31,10 @@ defmodule Livekitex.MixProject do
     [
       files: ~w(lib .formatter.exs mix.exs README.md),
       licenses: ["Apache-2.0"],
-      links: %{"GitHub" => "https://github.com/your-username/livekitex"},
+      links: %{"GitHub" => "https://github.com/rocket4ce/livekitex"},
       maintainers: ["Your Name"]
     ]
   end
-
-  
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
