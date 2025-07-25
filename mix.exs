@@ -7,16 +7,35 @@ defmodule Livekitex.MixProject do
       version: "0.1.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      description: description(),
+      package: package()
     ]
   end
 
-  # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger, :gun]
     ]
   end
+
+  defp description do
+    """
+    An Elixir client for LiveKit, providing tools for interacting with LiveKit servers,
+    including access token generation, room management, and webhook verification.
+    """
+  end
+
+  defp package do
+    [
+      files: ~w(lib .formatter.exs mix.exs README.md),
+      licenses: ["Apache-2.0"],
+      links: %{"GitHub" => "https://github.com/your-username/livekitex"},
+      maintainers: ["Your Name"]
+    ]
+  end
+
+  
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do
@@ -25,8 +44,17 @@ defmodule Livekitex.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:joken, "~> 2.6"},
       {:jason, "~> 1.4"},
-      {:grpc, "~> 0.7.0"},
-      {:tesla, "~> 1.4"}
+      {:grpc, "~> 0.10"},
+      {:gun, "~> 2.2"},
+      {:tesla, "~> 1.4"},
+      {:plug, "~> 1.14"},
+      {:plug_cowboy, "~> 2.6"},
+      {:telemetry, "~> 1.2"},
+      {:telemetry_metrics, "~> 0.6"},
+      {:telemetry_poller, "~> 1.0"},
+      {:connection, "~> 1.1"},
+      {:ex_doc, "~> 0.32", only: :dev, runtime: false},
+      {:mox, "~> 1.0", only: :test}
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]
