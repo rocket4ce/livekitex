@@ -32,7 +32,7 @@ defmodule Livekitex.MixProject do
       files: ~w(lib .formatter.exs mix.exs README.md),
       licenses: ["Apache-2.0"],
       links: %{"GitHub" => "https://github.com/rocket4ce/livekitex"},
-      maintainers: ["Your Name"]
+      maintainers: ["Rocket4ce"]
     ]
   end
 
