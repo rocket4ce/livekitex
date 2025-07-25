@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package livekit;
+
+import "livekit_models.proto";
+
+// Room service for managing rooms and participants
+service RoomService {
+  rpc CreateRoom(CreateRoomRequest) returns (Room);
+  rpc ListRooms(ListRoomsRequest) returns (ListRoomsResponse);
+  rpc DeleteRoom(DeleteRoomRequest) returns (DeleteRoomResponse);
+  rpc ListParticipants(ListParticipantsRequest) returns (ListParticipantsResponse);
+  rpc GetParticipant(RoomParticipantIdentity) returns (ParticipantInfo);
+  rpc RemoveParticipant(RoomParticipantIdentity) returns (RemoveParticipantResponse);
+  rpc MutePublishedTrack(MuteRoomTrackRequest) returns (MuteRoomTrackResponse);
+  rpc UpdateParticipant(UpdateParticipantRequest) returns (ParticipantInfo);
+  rpc UpdateSubscriptions(UpdateSubscriptionsRequest) returns (UpdateSubscriptionsResponse);
+  rpc SendData(SendDataRequest) returns (SendDataResponse);
+  rpc UpdateRoomMetadata(UpdateRoomMetadataRequest) returns (Room);
+}
+
+message CreateRoomRequest {
+  string name = 1;
+  uint32 empty_timeout = 2;
+  uint32 departure_timeout = 10;
+  uint32 max_participants = 3;
+  string node_id = 4;
+  string metadata = 5;
+  uint32 min_playout_delay = 7;
+  uint32 max_playout_delay = 8;
+  bool sync_streams = 9;
+  bool replay_enabled = 13;
+}
+
+message ListRoomsRequest {
+  repeated string names = 1;
+}
+
+message ListRoomsResponse {
+  repeated Room rooms = 1;
+}
+
+message DeleteRoomRequest {
+  string room = 1;
+}
+
+message DeleteRoomResponse {
+}
+
+message ListParticipantsRequest {
+  string room = 1;
+}
+
+message ListParticipantsResponse {
+  repeated ParticipantInfo participants = 1;
+}
+
+message RoomParticipantIdentity {
+  string room = 1;
+  string identity = 2;
+}
+
+message RemoveParticipantResponse {
+}
+
+message MuteRoomTrackRequest {
+  string room = 1;
+  string identity = 2;
+  string track_sid = 3;
+  bool muted = 4;
+}
+
+message MuteRoomTrackResponse {
+  TrackInfo track = 1;
+}
+
+message UpdateParticipantRequest {
+  string room = 1;
+  string identity = 2;
+  string metadata = 3;
+  ParticipantPermission permission = 4;
+  string name = 5;
+  map<string, string> attributes = 6;
+}
+
+message UpdateSubscriptionsRequest {
+  string room = 1;
+  string identity = 2;
+  repeated string track_sids = 3;
+  bool subscribe = 4;
+  repeated ParticipantTracks participant_tracks = 5;
+}
+
+message UpdateSubscriptionsResponse {
+}
+
+message SendDataRequest {
+  string room = 1;
+  bytes data = 2;
+  DataPacket.Kind kind = 3;
+  repeated string destination_sids = 4 [deprecated = true];
+  repeated string destination_identities = 6;
+  optional string topic = 5;
+  bytes nonce = 7;
+}
+
+message SendDataResponse {
+}
+
+message UpdateRoomMetadataRequest {
+  string room = 1;
+  string metadata = 2;
+}

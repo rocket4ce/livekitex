@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package livekit;
+option go_package = "github.com/livekit/protocol/livekit";
+
+import "livekit_models.proto";
+import "livekit_egress.proto";
+import "livekit_ingress.proto";
+
+message WebhookEvent {
+  // the name of the event
+  string event = 1;
+
+  // the room associated with the event, if applicable
+  Room room = 2;
+
+  // the participant associated with the event, if applicable
+  ParticipantInfo participant = 3;
+
+  // the egress associated with the event, if applicable
+  EgressInfo egress_info = 9;
+
+  // the ingress associated with the event, if applicable
+  IngressInfo ingress_info = 10;
+
+  // the track associated with the event, if applicable
+  TrackInfo track = 8;
+
+  // unique event id
+  string id = 6;
+
+  // timestamp in seconds
+  int64 created_at = 7;
+
+  // number of dropped events
+  int32 num_dropped = 11;
+}

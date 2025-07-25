@@ -1,0 +1,187 @@
+syntax = "proto3";
+
+package livekit;
+option go_package = "github.com/livekit/protocol/livekit";
+
+import "livekit_models.proto";
+import "livekit_egress.proto";
+
+enum IngressInput {
+  RTMP_INPUT = 0;
+  WHIP_INPUT = 1;
+  URL_INPUT = 2;
+}
+
+enum IngressAudioEncodingPreset {
+  // OPUS, 2 channels, 48kHz
+  OPUS_STEREO_96KBPS = 0;
+  OPUS_MONO_64KBPS = 1;
+}
+
+enum IngressVideoEncodingPreset {
+  // 1280x720, 30fps, 3000kbps, H.264_MAIN
+  H264_720P_30FPS_3_LAYERS = 0;
+  // 1920x1080, 30fps, 4500kbps, H.264_MAIN
+  H264_1080P_30FPS_3_LAYERS = 1;
+  // 1280x720, 30fps, 3000kbps, H.264_MAIN, no simulcast
+  H264_720P_30FPS_1_LAYER = 2;
+  // 1920x1080, 30fps, 4500kbps, H.264_MAIN, no simulcast
+  H264_1080P_30FPS_1_LAYER = 3;
+}
+
+message CreateIngressRequest {
+  IngressInput input_type = 1;
+  // Where to pull media from, only for URL input type
+  string url = 9;
+  // User provided identifier for the ingress
+  string name = 2;
+  // room to publish to
+  string room_name = 3;
+  // publish as this participant
+  string participant_identity = 4;
+  // name of publishing participant (used for display only)
+  string participant_name = 5;
+  // whether to pass through the incoming media without transcoding, only compatible with some input types. Use this to reduce latency and CPU usage, but compatibility is not guaranteed.
+  bool bypass_transcoding = 8;
+
+  oneof audio {
+    IngressAudioOptions audio_options = 6;
+    IngressAudioEncodingPreset audio_preset = 10;
+  }
+
+  oneof video {
+    IngressVideoOptions video_options = 7;
+    IngressVideoEncodingPreset video_preset = 11;
+  }
+}
+
+message IngressAudioOptions {
+  string name = 1;
+  TrackSource source = 2;
+  oneof encoding_options {
+    IngressAudioEncodingOptions preset = 3;
+    IngressAudioEncodingOptions options = 4;
+  }
+}
+
+message IngressVideoOptions {
+  string name = 1;
+  TrackSource source = 2;
+  oneof encoding_options {
+    IngressVideoEncodingOptions preset = 3;
+    IngressVideoEncodingOptions options = 4;
+  }
+}
+
+message IngressAudioEncodingOptions {
+  // desired audio codec to publish to room
+  AudioCodec audio_codec = 1;
+  uint32 bitrate = 2;
+  bool disable_dtx = 3;
+  uint32 channels = 4;
+}
+
+message IngressVideoEncodingOptions {
+  // desired codec to publish to room
+  VideoCodec video_codec = 1;
+  double frame_rate = 2;
+  // simulcast layers to publish, when empty, should usually be set to layers at 1/2 and 1/4 of the dimensions
+  repeated VideoLayer layers = 3;
+}
+
+message IngressInfo {
+  string ingress_id = 1;
+  string name = 2;
+  string stream_key = 3;
+  string url = 4; // URL to point the encoder to for push (RTMP, WHIP), or location to pull media from for pull (URL)
+  // for RTMP input, it'll be rtmp://host/live/{stream_key}
+  // for FILE input, it'll be the current HTTP endpoint that accepts the file upload
+  IngressInput input_type = 5;
+  bool bypass_transcoding = 13;
+  IngressAudioOptions audio = 6;
+  IngressVideoOptions video = 7;
+  string room_name = 8;
+  string participant_identity = 9;
+  string participant_name = 10;
+  bool reusable = 11;
+  IngressState state = 12;
+}
+
+message IngressState {
+  IngressStatus status = 1;
+  string error = 2;
+  VideoState video = 3;
+  AudioState audio = 4;
+  string room_id = 5;
+  int64 started_at = 7;
+  int64 ended_at = 8;
+  string resource_id = 9;
+  repeated TrackInfo tracks = 6;
+}
+
+message VideoState {
+  string mime_type = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  double framerate = 4;
+}
+
+message AudioState {
+  string mime_type = 1;
+  uint32 sample_rate = 2;
+  uint32 channels = 3;
+}
+
+enum IngressStatus {
+  ENDPOINT_INACTIVE = 0;
+  ENDPOINT_BUFFERING = 1;
+  ENDPOINT_PUBLISHING = 2;
+  ENDPOINT_ERROR = 3;
+  ENDPOINT_COMPLETE = 4;
+}
+
+message UpdateIngressRequest {
+  string ingress_id = 1;
+  string name = 2;
+  string room_name = 3;
+  string participant_identity = 4;
+  string participant_name = 5;
+  bool bypass_transcoding = 8;
+  oneof audio {
+    IngressAudioOptions audio_options = 6;
+    IngressAudioEncodingPreset audio_preset = 9;
+  }
+  oneof video {
+    IngressVideoOptions video_options = 7;
+    IngressVideoEncodingPreset video_preset = 10;
+  }
+}
+
+message ListIngressRequest {
+  // when blank, lists all ingress endpoints
+  string room_name = 1;
+  string ingress_id = 2;
+}
+
+message ListIngressResponse {
+  repeated IngressInfo items = 1;
+}
+
+message DeleteIngressRequest {
+  string ingress_id = 1;
+}
+
+// ingress service that can be used to start/stop room composite ingress
+service IngressService {
+  // Create a new Ingress
+  rpc CreateIngress(CreateIngressRequest) returns (IngressInfo);
+
+  // Update an existing Ingress. Ingress can only be updated when it's in ENDPOINT_INACTIVE state.
+  rpc UpdateIngress(UpdateIngressRequest) returns (IngressInfo);
+
+  // List all Ingress endpoints for the project, or a specific Ingress by ID
+  rpc ListIngress(ListIngressRequest) returns (ListIngressResponse);
+
+  // Delete a specific Ingress endpoint
+  rpc DeleteIngress(DeleteIngressRequest) returns (IngressInfo);
+}
