@@ -9,9 +9,7 @@ defmodule Livekitex do
   - Room management and participant control
   - Access token generation and validation
   - Webhook processing and validation
-  - Recording and streaming (Egress)
   - Structured logging and telemetry
-  - Connection pooling and optimization
 
   ## Quick Start
 
@@ -48,12 +46,11 @@ defmodule Livekitex do
   ## Services
 
   - `Livekitex.RoomService` - Room and participant management
-  - `Livekitex.EgressService` - Recording and streaming
   - `Livekitex.Webhook` - Webhook validation and processing
   - `Livekitex.AccessToken` - Token generation and validation
   """
 
-  alias Livekitex.{Config, RoomService, EgressService, AccessToken, Grants}
+  alias Livekitex.{Config, RoomService, AccessToken, Grants}
 
   @doc """
   Creates a room service client with current configuration.
@@ -68,22 +65,6 @@ defmodule Livekitex do
     RoomService.create(config.api_key, config.api_secret, host: config.host)
   end
 
-  @doc """
-  Creates an egress service client with current configuration.
-
-  ## Examples
-
-      client = Livekitex.egress_service()
-      {:ok, egress} = Livekitex.EgressService.start_room_composite_egress(
-        client,
-        "my-room",
-        output_config
-      )
-  """
-  def egress_service do
-    config = Config.client_config()
-    EgressService.new(config.api_key, config.api_secret, config.host)
-  end
 
   @doc """
   Creates an access token for the given identity.
@@ -236,27 +217,15 @@ defmodule Livekitex do
   @doc """
   Starts the LiveKit SDK application.
 
-  This sets up telemetry, connection pools, and other infrastructure.
+  This sets up telemetry and other infrastructure.
 
   ## Examples
 
       Livekitex.start()
   """
   def start do
-    # Start connection pool registry
-    Registry.start_link(keys: :unique, name: Livekitex.ConnectionPoolRegistry)
-
     # Setup telemetry
     Livekitex.Logger.setup_telemetry()
-
-    # Start connection pool for configured host
-    config = Config.get()
-
-    if config.api_key && config.api_secret && config.host do
-      pool_opts = Config.grpc_options()
-      Livekitex.ConnectionPool.start_link(config.host, pool_opts)
-    end
-
     :ok
   end
 
@@ -270,14 +239,6 @@ defmodule Livekitex do
   def stop do
     # Teardown telemetry
     Livekitex.Logger.teardown_telemetry()
-
-    # Stop connection pools
-    config = Config.get()
-
-    if config.host do
-      Livekitex.ConnectionPool.stop(config.host)
-    end
-
     :ok
   end
 

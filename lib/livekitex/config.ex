@@ -9,7 +9,7 @@ defmodule Livekitex.Config do
   require Logger
 
   @default_config %{
-    host: "localhost:7880",
+    host: "localhost",
     use_tls: false,
     api_key: nil,
     api_secret: nil,

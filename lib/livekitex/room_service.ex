@@ -1,27 +1,28 @@
 defmodule Livekitex.RoomService do
   @behaviour Livekitex.RoomServiceBehaviour
   @moduledoc """
-  Provides functionality to interact with the LiveKit RoomService API.
+  Provides functionality to interact with the LiveKit RoomService API using Twirp.
   """
 
   alias Livekitex.AccessToken
   alias Livekitex.Grants
-  alias Livekitex.GrpcUtils
+  alias Livekitex.TwirpUtils
+  alias Livekitex.RoomServiceClient
 
   require Logger
 
   defstruct api_key: nil,
             api_secret: nil,
             host: "localhost",
-            port: 7881,
-            channel: nil
+            port: 7880,
+            client: nil
 
   @type t :: %__MODULE__{
           api_key: String.t(),
           api_secret: String.t(),
           host: String.t(),
           port: integer(),
-          channel: GRPC.Channel.t() | nil
+          client: Tesla.Client.t() | nil
         }
 
   @doc """
@@ -77,16 +78,15 @@ defmodule Livekitex.RoomService do
       {:ok, %Livekitex.Room{}}
   """
   def create_room(%__MODULE__{} = room_service, name, options \\ []) do
-    with {:ok, channel} <- ensure_channel(room_service),
+    with {:ok, client} <- ensure_client(room_service),
          {:ok, token} <- create_room_token(room_service),
-         request <- build_create_room_request(name, options),
-         headers <- GrpcUtils.auth_headers(token) do
-      case Livekit.RoomService.Stub.create_room(channel, request, metadata: headers) do
+         request <- build_create_room_request(name, options) do
+      case RoomServiceClient.create_room(client, request, token) do
         {:ok, proto_room} ->
-          {:ok, GrpcUtils.proto_to_room(proto_room)}
+          {:ok, TwirpUtils.proto_to_room(proto_room)}
 
         error ->
-          GrpcUtils.handle_grpc_response(error)
+          TwirpUtils.handle_twirp_response(error)
       end
     end
   end
@@ -106,13 +106,12 @@ defmodule Livekitex.RoomService do
       :ok
   """
   def delete_room(%__MODULE__{} = room_service, room_name) do
-    with {:ok, channel} <- ensure_channel(room_service),
+    with {:ok, client} <- ensure_client(room_service),
          {:ok, token} <- create_room_token(room_service),
-         request <- %Livekit.DeleteRoomRequest{room: room_name},
-         headers <- GrpcUtils.auth_headers(token) do
-      case Livekit.RoomService.Stub.delete_room(channel, request, metadata: headers) do
+         request <- %Livekit.DeleteRoomRequest{room: room_name} do
+      case RoomServiceClient.delete_room(client, request, token) do
         {:ok, _response} -> :ok
-        error -> GrpcUtils.handle_grpc_response(error)
+        error -> TwirpUtils.handle_twirp_response(error)
       end
     end
   end
@@ -133,16 +132,15 @@ defmodule Livekitex.RoomService do
       {:ok, []}
   """
   def list_rooms(%__MODULE__{} = room_service, options \\ []) do
-    with {:ok, channel} <- ensure_channel(room_service),
+    with {:ok, client} <- ensure_client(room_service),
          {:ok, token} <- create_room_list_token(room_service),
-         request <- %Livekit.ListRoomsRequest{names: Keyword.get(options, :names, [])},
-         headers <- GrpcUtils.auth_headers(token) do
-      case Livekit.RoomService.Stub.list_rooms(channel, request, metadata: headers) do
+         request <- %Livekit.ListRoomsRequest{names: Keyword.get(options, :names, [])} do
+      case RoomServiceClient.list_rooms(client, request, token) do
         {:ok, %Livekit.ListRoomsResponse{rooms: rooms}} ->
-          {:ok, Enum.map(rooms, &GrpcUtils.proto_to_room/1)}
+          {:ok, Enum.map(rooms, &TwirpUtils.proto_to_room/1)}
 
         error ->
-          GrpcUtils.handle_grpc_response(error)
+          TwirpUtils.handle_twirp_response(error)
       end
     end
   end
@@ -162,16 +160,15 @@ defmodule Livekitex.RoomService do
       {:ok, []}
   """
   def list_participants(%__MODULE__{} = room_service, room_name) do
-    with {:ok, channel} <- ensure_channel(room_service),
+    with {:ok, client} <- ensure_client(room_service),
          {:ok, token} <- create_room_admin_token(room_service, room_name),
-         request <- %Livekit.ListParticipantsRequest{room: room_name},
-         headers <- GrpcUtils.auth_headers(token) do
-      case Livekit.RoomService.Stub.list_participants(channel, request, metadata: headers) do
+         request <- %Livekit.ListParticipantsRequest{room: room_name} do
+      case RoomServiceClient.list_participants(client, request, token) do
         {:ok, %Livekit.ListParticipantsResponse{participants: participants}} ->
-          {:ok, Enum.map(participants, &GrpcUtils.proto_to_participant/1)}
+          {:ok, Enum.map(participants, &TwirpUtils.proto_to_participant/1)}
 
         error ->
-          GrpcUtils.handle_grpc_response(error)
+          TwirpUtils.handle_twirp_response(error)
       end
     end
   end
@@ -192,13 +189,12 @@ defmodule Livekitex.RoomService do
       :ok
   """
   def remove_participant(%__MODULE__{} = room_service, room_name, identity) do
-    with {:ok, channel} <- ensure_channel(room_service),
+    with {:ok, client} <- ensure_client(room_service),
          {:ok, token} <- create_room_admin_token(room_service, room_name),
-         request <- %Livekit.RoomParticipantIdentity{room: room_name, identity: identity},
-         headers <- GrpcUtils.auth_headers(token) do
-      case Livekit.RoomService.Stub.remove_participant(channel, request, metadata: headers) do
+         request <- %Livekit.RoomParticipantIdentity{room: room_name, identity: identity} do
+      case RoomServiceClient.remove_participant(client, request, token) do
         {:ok, _response} -> :ok
-        error -> GrpcUtils.handle_grpc_response(error)
+        error -> TwirpUtils.handle_twirp_response(error)
       end
     end
   end
@@ -221,35 +217,33 @@ defmodule Livekitex.RoomService do
       {:ok, %{}}
   """
   def mute_published_track(%__MODULE__{} = room_service, room_name, identity, track_sid, muted) do
-    with {:ok, channel} <- ensure_channel(room_service),
+    with {:ok, client} <- ensure_client(room_service),
          {:ok, token} <- create_room_admin_token(room_service, room_name),
          request <- %Livekit.MuteRoomTrackRequest{
            room: room_name,
            identity: identity,
            track_sid: track_sid,
            muted: muted
-         },
-         headers <- GrpcUtils.auth_headers(token) do
-      case Livekit.RoomService.Stub.mute_published_track(channel, request, metadata: headers) do
+         } do
+      case RoomServiceClient.mute_published_track(client, request, token) do
         {:ok, %Livekit.MuteRoomTrackResponse{track: track}} ->
-          {:ok, GrpcUtils.proto_to_track(track)}
+          {:ok, TwirpUtils.proto_to_track(track)}
 
         error ->
-          GrpcUtils.handle_grpc_response(error)
+          TwirpUtils.handle_twirp_response(error)
       end
     end
   end
 
   # Private helper functions
 
-  defp ensure_channel(%__MODULE__{channel: nil} = room_service) do
-    case GrpcUtils.create_channel(room_service.host, room_service.port) do
-      {:ok, channel} -> {:ok, channel}
-      error -> error
-    end
+  defp ensure_client(%__MODULE__{client: nil} = room_service) do
+    base_url = "http://#{room_service.host}:#{room_service.port}"
+    client = TwirpUtils.create_client(base_url)
+    {:ok, client}
   end
 
-  defp ensure_channel(%__MODULE__{channel: channel}), do: {:ok, channel}
+  defp ensure_client(%__MODULE__{client: client}), do: {:ok, client}
 
   defp create_room_token(%__MODULE__{api_key: api_key, api_secret: api_secret}) do
     video_grant = %Grants.VideoGrant{room_create: true}

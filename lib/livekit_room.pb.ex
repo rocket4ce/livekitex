@@ -181,39 +181,3 @@ defmodule Livekit.UpdateRoomMetadataRequest do
   field :room, 1, type: :string
   field :metadata, 2, type: :string
 end
-
-defmodule Livekit.RoomService.Service do
-  @moduledoc false
-
-  use GRPC.Service, name: "livekit.RoomService", protoc_gen_elixir_version: "0.14.0"
-
-  rpc :CreateRoom, Livekit.CreateRoomRequest, Livekit.Room
-
-  rpc :ListRooms, Livekit.ListRoomsRequest, Livekit.ListRoomsResponse
-
-  rpc :DeleteRoom, Livekit.DeleteRoomRequest, Livekit.DeleteRoomResponse
-
-  rpc :ListParticipants, Livekit.ListParticipantsRequest, Livekit.ListParticipantsResponse
-
-  rpc :GetParticipant, Livekit.RoomParticipantIdentity, Livekit.ParticipantInfo
-
-  rpc :RemoveParticipant, Livekit.RoomParticipantIdentity, Livekit.RemoveParticipantResponse
-
-  rpc :MutePublishedTrack, Livekit.MuteRoomTrackRequest, Livekit.MuteRoomTrackResponse
-
-  rpc :UpdateParticipant, Livekit.UpdateParticipantRequest, Livekit.ParticipantInfo
-
-  rpc :UpdateSubscriptions,
-      Livekit.UpdateSubscriptionsRequest,
-      Livekit.UpdateSubscriptionsResponse
-
-  rpc :SendData, Livekit.SendDataRequest, Livekit.SendDataResponse
-
-  rpc :UpdateRoomMetadata, Livekit.UpdateRoomMetadataRequest, Livekit.Room
-end
-
-defmodule Livekit.RoomService.Stub do
-  @moduledoc false
-
-  use GRPC.Stub, service: Livekit.RoomService.Service
-end

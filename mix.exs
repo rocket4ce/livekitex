@@ -15,7 +15,8 @@ defmodule Livekitex.MixProject do
 
   def application do
     [
-      extra_applications: [:logger, :gun]
+      extra_applications: [:logger],
+      mod: {Livekitex.Application, []}
     ]
   end
 
@@ -44,9 +45,9 @@ defmodule Livekitex.MixProject do
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:joken, "~> 2.6"},
       {:jason, "~> 1.4"},
-      {:grpc, "~> 0.10"},
-      {:gun, "~> 2.2"},
+      {:twirp, "~> 0.8"},
       {:tesla, "~> 1.4"},
+      {:finch, "~> 0.16"},
       {:plug, "~> 1.14"},
       {:plug_cowboy, "~> 2.6"},
       {:telemetry, "~> 1.2"},
@@ -55,8 +56,6 @@ defmodule Livekitex.MixProject do
       {:connection, "~> 1.1"},
       {:ex_doc, "~> 0.32", only: :dev, runtime: false},
       {:mox, "~> 1.0", only: :test}
-      # {:dep_from_hexpm, "~> 0.3.0"},
-      # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]
   end
 end
