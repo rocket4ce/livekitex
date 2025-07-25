@@ -239,7 +239,7 @@ defmodule Livekitex.WebhookTest do
       # Main event fields
       assert event.event == "track_published"
       assert event.id == "webhook_789"
-      assert event.created_at == 1640995300
+      assert event.created_at == 1_640_995_300
       assert event.num_dropped == 5
 
       # Complete room data
@@ -249,7 +249,7 @@ defmodule Livekitex.WebhookTest do
       assert room.empty_timeout == 300
       assert room.departure_timeout == 20
       assert room.max_participants == 50
-      assert room.creation_time == 1640995000
+      assert room.creation_time == 1_640_995_000
       assert room.metadata == "meeting metadata"
       assert room.num_participants == 3
       assert room.num_publishers == 2
@@ -261,7 +261,7 @@ defmodule Livekitex.WebhookTest do
       assert participant.identity == "host123"
       assert participant.state == "ACTIVE"
       assert participant.metadata == "participant metadata"
-      assert participant.joined_at == 1640995150
+      assert participant.joined_at == 1_640_995_150
       assert participant.name == "Host User"
       assert participant.version == 2
       assert participant.region == "us-west-2"
@@ -302,8 +302,8 @@ defmodule Livekitex.WebhookTest do
       assert layer.quality == "HIGH"
       assert layer.width == 1920
       assert layer.height == 1080
-      assert layer.bitrate == 2000000
-      assert layer.ssrc == 123456789
+      assert layer.bitrate == 2_000_000
+      assert layer.ssrc == 123_456_789
 
       # Main track field (separate from participant tracks)
       main_track = event.track
@@ -316,9 +316,9 @@ defmodule Livekitex.WebhookTest do
       assert egress.room_id == "RM_123"
       assert egress.room_name == "conference-room"
       assert egress.status == "EGRESS_STARTING"
-      assert egress.started_at == 1640995300
+      assert egress.started_at == 1_640_995_300
       assert egress.ended_at == nil
-      assert egress.updated_at == 1640995310
+      assert egress.updated_at == 1_640_995_310
       assert egress.details == "Starting recording"
       assert egress.error == nil
 
@@ -532,13 +532,13 @@ defmodule Livekitex.WebhookTest do
   describe "error handling and edge cases" do
     test "handles malformed JSON with specific error message" do
       malformed_json = "{ invalid json"
-      
+
       assert {:error, :invalid_json} = Webhook.parse_webhook_event(malformed_json)
     end
 
     test "handles JSON that is not a map" do
       json_array = "[1, 2, 3]"
-      
+
       # This should crash because Map.get expects a map
       assert_raise BadMapError, fn ->
         Webhook.parse_webhook_event(json_array)
@@ -547,7 +547,7 @@ defmodule Livekitex.WebhookTest do
 
     test "handles completely empty JSON object" do
       empty_json = "{}"
-      
+
       assert {:ok, event} = Webhook.parse_webhook_event(empty_json)
       assert is_nil(event.event)
       assert is_nil(event.id)
@@ -570,14 +570,16 @@ defmodule Livekitex.WebhookTest do
       ]
 
       for header <- invalid_auth_headers do
-        result = case header do
-          nil -> 
-            # This would cause a function clause error, but let's test with empty string instead
-            Webhook.validate_webhook(@valid_webhook_body, "", @api_secret)
-          _ ->
-            Webhook.validate_webhook(@valid_webhook_body, header, @api_secret)
-        end
-        
+        result =
+          case header do
+            nil ->
+              # This would cause a function clause error, but let's test with empty string instead
+              Webhook.validate_webhook(@valid_webhook_body, "", @api_secret)
+
+            _ ->
+              Webhook.validate_webhook(@valid_webhook_body, header, @api_secret)
+          end
+
         assert {:error, _reason} = result
       end
     end
@@ -587,8 +589,8 @@ defmodule Livekitex.WebhookTest do
       wrong_secret_token = create_token_with_secret("wrong_secret")
       auth_header = "Bearer #{wrong_secret_token}"
 
-      assert {:error, _reason} = 
-        Webhook.validate_webhook(@valid_webhook_body, auth_header, @api_secret)
+      assert {:error, _reason} =
+               Webhook.validate_webhook(@valid_webhook_body, auth_header, @api_secret)
     end
 
     test "validate_webhook handles JSON parsing errors in chain" do
@@ -596,8 +598,8 @@ defmodule Livekitex.WebhookTest do
       auth_header = "Bearer #{token}"
       invalid_json = "{ incomplete json"
 
-      assert {:error, :invalid_json} = 
-        Webhook.validate_webhook(invalid_json, auth_header, @api_secret)
+      assert {:error, :invalid_json} =
+               Webhook.validate_webhook(invalid_json, auth_header, @api_secret)
     end
   end
 
@@ -628,10 +630,10 @@ defmodule Livekitex.WebhookTest do
 
       assert {:ok, event} = Webhook.parse_webhook_event(webhook_body)
       tracks = event.participant.tracks
-      
+
       assert length(tracks) == 2
-      assert Enum.find(tracks, & &1.sid == "TR_audio")
-      assert Enum.find(tracks, & &1.sid == "TR_video")
+      assert Enum.find(tracks, &(&1.sid == "TR_audio"))
+      assert Enum.find(tracks, &(&1.sid == "TR_video"))
     end
 
     test "parse_video_layers with multiple layers" do
@@ -665,20 +667,20 @@ defmodule Livekitex.WebhookTest do
 
       assert {:ok, event} = Webhook.parse_webhook_event(webhook_body)
       layers = event.track.layers
-      
+
       assert length(layers) == 2
-      
-      low_layer = Enum.find(layers, & &1.quality == "LOW")
+
+      low_layer = Enum.find(layers, &(&1.quality == "LOW"))
       assert low_layer.width == 320
       assert low_layer.height == 240
-      assert low_layer.bitrate == 150000
-      assert low_layer.ssrc == 111111
-      
-      high_layer = Enum.find(layers, & &1.quality == "HIGH")  
+      assert low_layer.bitrate == 150_000
+      assert low_layer.ssrc == 111_111
+
+      high_layer = Enum.find(layers, &(&1.quality == "HIGH"))
       assert high_layer.width == 1280
       assert high_layer.height == 720
-      assert high_layer.bitrate == 1000000
-      assert high_layer.ssrc == 222222
+      assert high_layer.bitrate == 1_000_000
+      assert high_layer.ssrc == 222_222
     end
   end
 

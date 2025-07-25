@@ -13,9 +13,11 @@ defmodule Livekitex.RoomServiceTest do
     case result do
       {:ok, data} ->
         success_assertion_fn.(data)
+
       {:error, {:twirp_error, _}} ->
         # Server not available, test passes
         assert true
+
       other ->
         flunk("Expected success or connection error, got: #{inspect(other)}")
     end
@@ -60,7 +62,7 @@ defmodule Livekitex.RoomServiceTest do
 
       # Both calls should be either successful or fail with connection error
       assert_server_result(result1, fn room -> assert room.name == room_name end)
-      
+
       case result2 do
         {:ok, room} -> assert room.name == room_name
         {:error, {:already_exists, _}} -> assert true
@@ -76,16 +78,16 @@ defmodule Livekitex.RoomServiceTest do
       |> assert_server_result(fn rooms ->
         assert is_list(rooms)
         # We don't check the exact count since other tests may have created rooms
-        assert Enum.all?(rooms, fn room -> 
-          is_binary(room.name) && is_binary(room.sid) 
-        end)
+        assert Enum.all?(rooms, fn room ->
+                 is_binary(room.name) && is_binary(room.sid)
+               end)
       end)
     end
 
     test "filters rooms by name", %{room_service: room_service} do
       # Create a test room first
       test_room_name = "filter-test-room-#{System.unique_integer([:positive])}"
-      
+
       case RoomService.create_room(room_service, test_room_name) do
         {:ok, _room} ->
           # Test filtering
@@ -96,11 +98,13 @@ defmodule Livekitex.RoomServiceTest do
             else
               # Filtering might not be implemented, which is acceptable
               assert true
-            end  
+            end
           end)
+
         {:error, {:twirp_error, _}} ->
           # Server not available, test passes
           assert true
+
         other ->
           flunk("Unexpected result: #{inspect(other)}")
       end
@@ -110,20 +114,24 @@ defmodule Livekitex.RoomServiceTest do
   describe "delete_room/2" do
     test "deletes a room successfully", %{room_service: room_service} do
       room_name = "delete-test-room-#{System.unique_integer([:positive])}"
-      
+
       # First create the room
       case RoomService.create_room(room_service, room_name) do
         {:ok, _room} ->
           # Then delete it
           case RoomService.delete_room(room_service, room_name) do
             :ok -> assert true
-            {:error, {:not_found, _}} -> assert true  # Room might have been auto-deleted
-            {:error, {:twirp_error, _}} -> assert true  # Server not available
+            # Room might have been auto-deleted
+            {:error, {:not_found, _}} -> assert true
+            # Server not available
+            {:error, {:twirp_error, _}} -> assert true
             other -> flunk("Unexpected result: #{inspect(other)}")
           end
+
         {:error, {:twirp_error, _}} ->
           # Server not available, test passes
           assert true
+
         other ->
           flunk("Unexpected result during room creation: #{inspect(other)}")
       end
@@ -134,7 +142,8 @@ defmodule Livekitex.RoomServiceTest do
 
       case RoomService.delete_room(room_service, non_existent_room) do
         {:error, {:not_found, _message}} -> assert true
-        {:error, {:twirp_error, _}} -> assert true  # Server not available
+        # Server not available
+        {:error, {:twirp_error, _}} -> assert true
         other -> flunk("Expected not_found or connection error, got: #{inspect(other)}")
       end
     end
@@ -143,7 +152,7 @@ defmodule Livekitex.RoomServiceTest do
   describe "list_participants/2" do
     test "lists participants in room", %{room_service: room_service} do
       room_name = "participants-test-room-#{System.unique_integer([:positive])}"
-      
+
       # Create room first
       case RoomService.create_room(room_service, room_name) do
         {:ok, _room} ->
@@ -153,9 +162,11 @@ defmodule Livekitex.RoomServiceTest do
             # Empty room should have no participants
             assert participants == []
           end)
+
         {:error, {:twirp_error, _}} ->
           # Server not available, test passes
           assert true
+
         other ->
           flunk("Unexpected result: #{inspect(other)}")
       end
@@ -165,10 +176,19 @@ defmodule Livekitex.RoomServiceTest do
       non_existent_room = "non-existent-room-#{System.unique_integer([:positive])}"
 
       case RoomService.list_participants(room_service, non_existent_room) do
-        {:error, {:not_found, _message}} -> assert true
-        {:ok, []} -> assert true  # Some implementations return empty list
-        {:error, {:twirp_error, _}} -> assert true  # Server not available
-        other -> flunk("Expected not_found, empty list, or connection error, got: #{inspect(other)}")
+        {:error, {:not_found, _message}} ->
+          assert true
+
+        # Some implementations return empty list
+        {:ok, []} ->
+          assert true
+
+        # Server not available
+        {:error, {:twirp_error, _}} ->
+          assert true
+
+        other ->
+          flunk("Expected not_found, empty list, or connection error, got: #{inspect(other)}")
       end
     end
   end
@@ -178,10 +198,19 @@ defmodule Livekitex.RoomServiceTest do
       room_name = "remove-participant-test-#{System.unique_integer([:positive])}"
 
       case RoomService.remove_participant(room_service, room_name, "non-existent-user") do
-        {:error, {:not_found, _message}} -> assert true
-        {:error, {:twirp_error, _}} -> assert true  # Server not available
-        {:error, {:unavailable, _}} -> assert true  # Server may return unavailable
-        other -> flunk("Expected not_found, unavailable, or connection error, got: #{inspect(other)}")
+        {:error, {:not_found, _message}} ->
+          assert true
+
+        # Server not available
+        {:error, {:twirp_error, _}} ->
+          assert true
+
+        # Server may return unavailable
+        {:error, {:unavailable, _}} ->
+          assert true
+
+        other ->
+          flunk("Expected not_found, unavailable, or connection error, got: #{inspect(other)}")
       end
     end
   end
@@ -191,10 +220,19 @@ defmodule Livekitex.RoomServiceTest do
       room_name = "mute-track-test-#{System.unique_integer([:positive])}"
 
       case RoomService.mute_published_track(room_service, room_name, "user", "track_sid", true) do
-        {:error, {:not_found, _message}} -> assert true
-        {:error, {:unavailable, _}} -> assert true  # Server may return unavailable
-        {:error, {:twirp_error, _}} -> assert true  # Server not available
-        other -> flunk("Expected not_found, unavailable, or connection error, got: #{inspect(other)}")
+        {:error, {:not_found, _message}} ->
+          assert true
+
+        # Server may return unavailable
+        {:error, {:unavailable, _}} ->
+          assert true
+
+        # Server not available
+        {:error, {:twirp_error, _}} ->
+          assert true
+
+        other ->
+          flunk("Expected not_found, unavailable, or connection error, got: #{inspect(other)}")
       end
     end
   end
@@ -234,7 +272,8 @@ defmodule Livekitex.RoomServiceTest do
 
       case RoomService.create_room(room_service, "test-room") do
         {:error, _reason} -> assert true
-        {:ok, _room} -> assert true  # Empty secret might still work
+        # Empty secret might still work
+        {:ok, _room} -> assert true
         other -> flunk("Expected error or success, got: #{inspect(other)}")
       end
     end
@@ -243,14 +282,14 @@ defmodule Livekitex.RoomServiceTest do
   describe "client management" do
     test "reuses existing client when available" do
       room_service = RoomService.create("devkey", "secret", host: "localhost", port: 7880)
-      
+
       # First call should create client
       result1 = RoomService.list_rooms(room_service)
-      
+
       # Second call should reuse client (we can't directly test this without mocking,
       # but we can verify it doesn't crash)
       result2 = RoomService.list_rooms(room_service)
-      
+
       # Both calls should have consistent behavior
       case {result1, result2} do
         {{:error, {:twirp_error, _}}, {:error, {:twirp_error, _}}} -> assert true
@@ -270,11 +309,12 @@ defmodule Livekitex.RoomServiceTest do
 
       for {host, port} <- test_cases do
         room_service = RoomService.create("devkey", "secret", host: host, port: port)
-        
+
         # Make a call to ensure client is created
         case RoomService.list_rooms(room_service) do
           {:ok, _rooms} -> assert true
-          {:error, _reason} -> assert true  # Expected if server not available
+          # Expected if server not available
+          {:error, _reason} -> assert true
           other -> flunk("Unexpected result: #{inspect(other)}")
         end
       end
@@ -284,7 +324,7 @@ defmodule Livekitex.RoomServiceTest do
   describe "request building and options" do
     test "build_create_room_request with all options" do
       room_service = RoomService.create("devkey", "secret", host: "localhost", port: 7880)
-      
+
       options = [
         empty_timeout: 300,
         departure_timeout: 20,
@@ -297,8 +337,10 @@ defmodule Livekitex.RoomServiceTest do
 
       case RoomService.create_room(room_service, "test-room-with-all-options", options) do
         {:ok, _room} -> assert true
-        {:error, {:twirp_error, _}} -> assert true  # Server not available
-        {:error, _reason} -> assert true  # Other errors
+        # Server not available
+        {:error, {:twirp_error, _}} -> assert true
+        # Other errors
+        {:error, _reason} -> assert true
         other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
@@ -308,15 +350,17 @@ defmodule Livekitex.RoomServiceTest do
 
       case RoomService.create_room(room_service, "minimal-room") do
         {:ok, _room} -> assert true
-        {:error, {:twirp_error, _}} -> assert true  # Server not available
-        {:error, _reason} -> assert true  # Other errors
+        # Server not available
+        {:error, {:twirp_error, _}} -> assert true
+        # Other errors
+        {:error, _reason} -> assert true
         other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
 
     test "build_create_room_request with partial options" do
       room_service = RoomService.create("devkey", "secret", host: "localhost", port: 7880)
-      
+
       options = [
         max_participants: 10,
         metadata: "partial options test"
@@ -324,8 +368,10 @@ defmodule Livekitex.RoomServiceTest do
 
       case RoomService.create_room(room_service, "partial-options-room", options) do
         {:ok, _room} -> assert true
-        {:error, {:twirp_error, _}} -> assert true  # Server not available
-        {:error, _reason} -> assert true  # Other errors
+        # Server not available
+        {:error, {:twirp_error, _}} -> assert true
+        # Other errors
+        {:error, _reason} -> assert true
         other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
@@ -339,33 +385,44 @@ defmodule Livekitex.RoomServiceTest do
       # Test room creation token (room_create permission)
       case RoomService.create_room(room_service, room_name) do
         {:ok, _room} -> assert true
-        {:error, _reason} -> assert true  # Expected if server not available
+        # Expected if server not available
+        {:error, _reason} -> assert true
         other -> flunk("Unexpected result: #{inspect(other)}")
       end
 
       # Test room list token (room_list permission) 
       case RoomService.list_rooms(room_service) do
         {:ok, _rooms} -> assert true
-        {:error, _reason} -> assert true  # Expected if server not available
+        # Expected if server not available
+        {:error, _reason} -> assert true
         other -> flunk("Unexpected result: #{inspect(other)}")
       end
 
       # Test room admin token (room_admin permission)
       case RoomService.list_participants(room_service, room_name) do
         {:ok, _participants} -> assert true
-        {:error, _reason} -> assert true  # Expected if server not available
+        # Expected if server not available
+        {:error, _reason} -> assert true
         other -> flunk("Unexpected result: #{inspect(other)}")
       end
 
       case RoomService.remove_participant(room_service, room_name, "test-user") do
         :ok -> assert true
-        {:error, _reason} -> assert true  # Expected if server not available
+        # Expected if server not available
+        {:error, _reason} -> assert true
         other -> flunk("Unexpected result: #{inspect(other)}")
       end
 
-      case RoomService.mute_published_track(room_service, room_name, "test-user", "track-123", true) do
+      case RoomService.mute_published_track(
+             room_service,
+             room_name,
+             "test-user",
+             "track-123",
+             true
+           ) do
         {:ok, _track} -> assert true
-        {:error, _reason} -> assert true  # Expected if server not available
+        # Expected if server not available
+        {:error, _reason} -> assert true
         other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
@@ -379,13 +436,15 @@ defmodule Livekitex.RoomServiceTest do
       # The actual transformation is tested in TwirpUtils tests
       case RoomService.list_rooms(room_service) do
         {:ok, rooms} when is_list(rooms) -> assert true
-        {:error, _reason} -> assert true  # Expected if server not available
+        # Expected if server not available
+        {:error, _reason} -> assert true
         other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
 
     test "handles error responses consistently" do
-      room_service = RoomService.create("invalid_key", "invalid_secret", host: "localhost", port: 7880)
+      room_service =
+        RoomService.create("invalid_key", "invalid_secret", host: "localhost", port: 7880)
 
       # All methods should handle errors consistently
       methods_and_args = [
@@ -399,11 +458,14 @@ defmodule Livekitex.RoomServiceTest do
 
       for {method, args} <- methods_and_args do
         result = apply(RoomService, method, [room_service | args])
-        
+
         case result do
-          {:error, _reason} -> assert true  # Expected
-          {:ok, _data} -> assert true  # Might work if server accepts invalid auth
-          :ok -> assert true  # For delete_room and remove_participant
+          # Expected
+          {:error, _reason} -> assert true
+          # Might work if server accepts invalid auth
+          {:ok, _data} -> assert true
+          # For delete_room and remove_participant
+          :ok -> assert true
           other -> flunk("Unexpected result for #{method}: #{inspect(other)}")
         end
       end
@@ -413,7 +475,7 @@ defmodule Livekitex.RoomServiceTest do
   describe "struct and type validation" do
     test "create returns proper struct" do
       room_service = RoomService.create("api_key", "api_secret")
-      
+
       assert %Livekitex.RoomService{} = room_service
       assert room_service.api_key == "api_key"
       assert room_service.api_secret == "api_secret"
@@ -424,14 +486,14 @@ defmodule Livekitex.RoomServiceTest do
 
     test "create with custom options" do
       room_service = RoomService.create("key", "secret", host: "example.com", port: 443)
-      
+
       assert room_service.host == "example.com"
       assert room_service.port == 443
     end
 
     test "create ignores unknown options" do
       room_service = RoomService.create("key", "secret", unknown_option: "value", port: 8080)
-      
+
       assert room_service.port == 8080
       # Should not crash and should ignore unknown options
     end
@@ -441,34 +503,37 @@ defmodule Livekitex.RoomServiceTest do
     test "ensure_client with existing client" do
       # Create a room service and make a call to establish a client
       room_service = RoomService.create("devkey", "secret", host: "localhost", port: 7880)
-      
+
       # Make first call to establish client
       _result1 = RoomService.list_rooms(room_service)
-      
+
       # Make second call to test reuse of existing client path
       result2 = RoomService.list_rooms(room_service)
-      
+
       case result2 do
         {:ok, _rooms} -> assert true
-        {:error, _reason} -> assert true  # Expected if server not available
+        # Expected if server not available
+        {:error, _reason} -> assert true
         other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
-    
+
     test "token creation error handling paths" do
       # Test error path in token creation by using invalid parameters
       room_service = RoomService.create("", "", host: "localhost", port: 7880)
 
       case RoomService.create_room(room_service, "test-room") do
-        {:ok, _room} -> assert true  # Might work with empty credentials
-        {:error, _reason} -> assert true  # Expected error
+        # Might work with empty credentials
+        {:ok, _room} -> assert true
+        # Expected error
+        {:error, _reason} -> assert true
         other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
 
     test "all create room request options are handled" do
       room_service = RoomService.create("devkey", "secret", host: "localhost", port: 7880)
-      
+
       # Test with nil values for all options to ensure proper handling
       options = [
         empty_timeout: nil,
@@ -482,18 +547,20 @@ defmodule Livekitex.RoomServiceTest do
 
       case RoomService.create_room(room_service, "nil-options-room", options) do
         {:ok, _room} -> assert true
-        {:error, _reason} -> assert true  # Expected if server not available
+        # Expected if server not available
+        {:error, _reason} -> assert true
         other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end
 
     test "list_rooms with names filter" do
       room_service = RoomService.create("devkey", "secret", host: "localhost", port: 7880)
-      
+
       # Test with specific room names filter
       case RoomService.list_rooms(room_service, names: ["room1", "room2"]) do
         {:ok, _rooms} -> assert true
-        {:error, _reason} -> assert true  # Expected if server not available
+        # Expected if server not available
+        {:error, _reason} -> assert true
         other -> flunk("Unexpected result: #{inspect(other)}")
       end
     end

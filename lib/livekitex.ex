@@ -65,7 +65,6 @@ defmodule Livekitex do
     RoomService.create(config.api_key, config.api_secret, host: config.host)
   end
 
-
   @doc """
   Creates an access token for the given identity.
 

@@ -22,7 +22,7 @@ defmodule Livekitex.RoomServiceTwirpTest do
       # Verify the module properly implements the Twirp.Service behaviour
       # The presence of definition/0 function and proper structure indicates this
       assert function_exported?(RoomServiceTwirp, :definition, 0)
-      
+
       definition = RoomServiceTwirp.definition()
       assert is_map(definition)
       assert Map.has_key?(definition, :package)
@@ -37,7 +37,7 @@ defmodule Livekitex.RoomServiceTwirpTest do
 
     test "definition returns service configuration" do
       definition = RoomServiceTwirp.definition()
-      
+
       # The definition should be a map with service configuration
       assert is_map(definition)
       assert definition.package == "livekit"
@@ -63,7 +63,7 @@ defmodule Livekitex.RoomServiceTwirpTest do
 
       expected_methods = [
         :CreateRoom,
-        :ListRooms, 
+        :ListRooms,
         :DeleteRoom,
         :ListParticipants,
         :RemoveParticipant,
@@ -73,14 +73,14 @@ defmodule Livekitex.RoomServiceTwirpTest do
       method_names = Enum.map(rpcs, & &1.method)
 
       for expected_method <- expected_methods do
-        assert expected_method in method_names, 
-          "Expected method #{expected_method} to be defined"
+        assert expected_method in method_names,
+               "Expected method #{expected_method} to be defined"
       end
     end
 
     test "CreateRoom method configuration" do
       definition = RoomServiceTwirp.definition()
-      create_room_method = Enum.find(definition.rpcs, & &1.method == :CreateRoom)
+      create_room_method = Enum.find(definition.rpcs, &(&1.method == :CreateRoom))
 
       assert create_room_method != nil
       assert create_room_method.input == Livekit.CreateRoomRequest
@@ -90,7 +90,7 @@ defmodule Livekitex.RoomServiceTwirpTest do
 
     test "ListRooms method configuration" do
       definition = RoomServiceTwirp.definition()
-      list_rooms_method = Enum.find(definition.rpcs, & &1.method == :ListRooms)
+      list_rooms_method = Enum.find(definition.rpcs, &(&1.method == :ListRooms))
 
       assert list_rooms_method != nil
       assert list_rooms_method.input == Livekit.ListRoomsRequest
@@ -100,7 +100,7 @@ defmodule Livekitex.RoomServiceTwirpTest do
 
     test "DeleteRoom method configuration" do
       definition = RoomServiceTwirp.definition()
-      delete_room_method = Enum.find(definition.rpcs, & &1.method == :DeleteRoom)
+      delete_room_method = Enum.find(definition.rpcs, &(&1.method == :DeleteRoom))
 
       assert delete_room_method != nil
       assert delete_room_method.input == Livekit.DeleteRoomRequest
@@ -110,7 +110,7 @@ defmodule Livekitex.RoomServiceTwirpTest do
 
     test "ListParticipants method configuration" do
       definition = RoomServiceTwirp.definition()
-      list_participants_method = Enum.find(definition.rpcs, & &1.method == :ListParticipants)
+      list_participants_method = Enum.find(definition.rpcs, &(&1.method == :ListParticipants))
 
       assert list_participants_method != nil
       assert list_participants_method.input == Livekit.ListParticipantsRequest
@@ -120,7 +120,7 @@ defmodule Livekitex.RoomServiceTwirpTest do
 
     test "RemoveParticipant method configuration" do
       definition = RoomServiceTwirp.definition()
-      remove_participant_method = Enum.find(definition.rpcs, & &1.method == :RemoveParticipant)
+      remove_participant_method = Enum.find(definition.rpcs, &(&1.method == :RemoveParticipant))
 
       assert remove_participant_method != nil
       assert remove_participant_method.input == Livekit.RoomParticipantIdentity
@@ -130,7 +130,7 @@ defmodule Livekitex.RoomServiceTwirpTest do
 
     test "MutePublishedTrack method configuration" do
       definition = RoomServiceTwirp.definition()
-      mute_track_method = Enum.find(definition.rpcs, & &1.method == :MutePublishedTrack)
+      mute_track_method = Enum.find(definition.rpcs, &(&1.method == :MutePublishedTrack))
 
       assert mute_track_method != nil
       assert mute_track_method.input == Livekit.MuteRoomTrackRequest
@@ -143,7 +143,7 @@ defmodule Livekitex.RoomServiceTwirpTest do
     test "handler function names are properly configured" do
       # Verify that all the handler functions are properly configured in the RPC definitions
       definition = RoomServiceTwirp.definition()
-      
+
       expected_handlers = [
         :create_room,
         :list_rooms,
@@ -152,12 +152,12 @@ defmodule Livekitex.RoomServiceTwirpTest do
         :remove_participant,
         :mute_published_track
       ]
-      
+
       actual_handlers = Enum.map(definition.rpcs, & &1.handler_fn)
-      
+
       for expected_handler <- expected_handlers do
         assert expected_handler in actual_handlers,
-          "Expected handler function #{expected_handler} to be configured"
+               "Expected handler function #{expected_handler} to be configured"
       end
     end
 
@@ -167,8 +167,9 @@ defmodule Livekitex.RoomServiceTwirpTest do
 
       for rpc <- definition.rpcs do
         handler = rpc.handler_fn
+
         assert is_atom(handler),
-          "Handler #{handler} should be an atom"
+               "Handler #{handler} should be an atom"
       end
     end
   end
@@ -182,11 +183,11 @@ defmodule Livekitex.RoomServiceTwirpTest do
 
         # Verify it's a loaded protobuf module
         assert Code.ensure_loaded?(input_type),
-          "Input type #{input_type} should be loadable"
-        
+               "Input type #{input_type} should be loadable"
+
         # Protobuf modules should have certain functions
         assert function_exported?(input_type, :new, 0) or function_exported?(input_type, :new, 1),
-          "#{input_type} should have new/0 or new/1 function"
+               "#{input_type} should have new/0 or new/1 function"
       end
     end
 
@@ -198,11 +199,12 @@ defmodule Livekitex.RoomServiceTwirpTest do
 
         # Verify it's a loaded protobuf module
         assert Code.ensure_loaded?(output_type),
-          "Output type #{output_type} should be loadable"
-        
+               "Output type #{output_type} should be loadable"
+
         # Protobuf modules should have certain functions
-        assert function_exported?(output_type, :new, 0) or function_exported?(output_type, :new, 1),
-          "#{output_type} should have new/0 or new/1 function"
+        assert function_exported?(output_type, :new, 0) or
+                 function_exported?(output_type, :new, 1),
+               "#{output_type} should have new/0 or new/1 function"
       end
     end
   end
@@ -210,11 +212,11 @@ defmodule Livekitex.RoomServiceTwirpTest do
   describe "Twirp endpoints" do
     test "can generate endpoint paths" do
       definition = RoomServiceTwirp.definition()
-      
+
       # Each method should correspond to a Twirp endpoint path
       for rpc <- definition.rpcs do
         expected_path = "/twirp/#{definition.package}.#{definition.service}/#{rpc.method}"
-        
+
         # We can't directly test the endpoint generation without the Twirp server,
         # but we can verify the structure is correct for generating paths
         assert is_binary(definition.package)
@@ -229,10 +231,10 @@ defmodule Livekitex.RoomServiceTwirpTest do
 
       for rpc <- definition.rpcs do
         method_name = Atom.to_string(rpc.method)
-        
+
         # Twirp method names should be PascalCase when converted to string
         assert String.match?(method_name, ~r/^[A-Z][A-Za-z0-9]*$/),
-          "Method name '#{method_name}' should be in PascalCase"
+               "Method name '#{method_name}' should be in PascalCase"
       end
     end
   end
@@ -241,31 +243,31 @@ defmodule Livekitex.RoomServiceTwirpTest do
     test "package name follows protobuf conventions" do
       definition = RoomServiceTwirp.definition()
       package = definition.package
-      
+
       # Package names should be lowercase and may contain dots
       assert String.match?(package, ~r/^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)*$/),
-        "Package name '#{package}' should follow protobuf naming conventions"
+             "Package name '#{package}' should follow protobuf naming conventions"
     end
 
     test "service name follows protobuf conventions" do
       definition = RoomServiceTwirp.definition()
       service = definition.service
-      
+
       # Service names should start with uppercase letter
       assert String.match?(service, ~r/^[A-Z][A-Za-z0-9]*$/),
-        "Service name '#{service}' should follow protobuf naming conventions"
+             "Service name '#{service}' should follow protobuf naming conventions"
     end
 
     test "service has complete method definitions" do
       definition = RoomServiceTwirp.definition()
-      
+
       # Verify each method has complete configuration
       for rpc <- definition.rpcs do
         assert is_atom(rpc.method)
-        assert is_atom(rpc.input) 
+        assert is_atom(rpc.input)
         assert is_atom(rpc.output)
         assert is_atom(rpc.handler_fn)
-        
+
         # Verify the configuration is not nil
         refute is_nil(rpc.method)
         refute is_nil(rpc.input)
@@ -276,16 +278,17 @@ defmodule Livekitex.RoomServiceTwirpTest do
 
     test "service configuration is consistent" do
       definition = RoomServiceTwirp.definition()
-      
+
       # Basic consistency checks
       assert length(definition.rpcs) == 6, "Expected 6 RPC methods"
       assert definition.package != ""
       assert definition.service != ""
-      
+
       # All methods should have unique names
       method_names = Enum.map(definition.rpcs, & &1.method)
+
       assert length(method_names) == length(Enum.uniq(method_names)),
-        "All method names should be unique"
+             "All method names should be unique"
     end
   end
 end

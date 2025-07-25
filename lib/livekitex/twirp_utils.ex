@@ -43,17 +43,19 @@ defmodule Livekitex.TwirpUtils do
   def create_client(base_url, token \\ nil, opts \\ []) do
     middleware = [
       {Tesla.Middleware.BaseUrl, base_url},
-      {Tesla.Middleware.Headers, [
-        {"content-type", "application/protobuf"}
-      ]},
+      {Tesla.Middleware.Headers,
+       [
+         {"content-type", "application/protobuf"}
+       ]},
       {Tesla.Middleware.Timeout, timeout: Keyword.get(opts, :timeout, 30_000)}
     ]
 
-    middleware = if token do
-      [{Tesla.Middleware.Headers, [{"authorization", "Bearer #{token}"}]} | middleware]
-    else
-      middleware
-    end
+    middleware =
+      if token do
+        [{Tesla.Middleware.Headers, [{"authorization", "Bearer #{token}"}]} | middleware]
+      else
+        middleware
+      end
 
     adapter = {Tesla.Adapter.Finch, name: Livekitex.Finch}
 

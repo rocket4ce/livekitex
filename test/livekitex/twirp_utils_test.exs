@@ -102,7 +102,7 @@ defmodule Livekitex.TwirpUtilsTest do
         empty_timeout: 300,
         departure_timeout: 20,
         max_participants: 10,
-        creation_time: 1640995200,
+        creation_time: 1_640_995_200,
         turn_password: "password123",
         enabled_codecs: [
           %Livekit.Codec{mime: "audio/opus", fmtp_line: ""},
@@ -112,7 +112,7 @@ defmodule Livekitex.TwirpUtilsTest do
         num_participants: 2,
         num_publishers: 1,
         active_recording: false,
-        version: %Livekit.TimedVersion{unix_micro: 1640995200000000, ticks: 1}
+        version: %Livekit.TimedVersion{unix_micro: 1_640_995_200_000_000, ticks: 1}
       }
 
       room = TwirpUtils.proto_to_room(proto_room)
@@ -123,18 +123,18 @@ defmodule Livekitex.TwirpUtilsTest do
       assert room.empty_timeout == 300
       assert room.departure_timeout == 20
       assert room.max_participants == 10
-      assert room.creation_time == 1640995200
+      assert room.creation_time == 1_640_995_200
       assert room.turn_password == "password123"
       assert room.metadata == "test metadata"
       assert room.num_participants == 2
       assert room.num_publishers == 1
       assert room.active_recording == false
-      
+
       assert length(room.enabled_codecs) == 2
       assert %{mime: "audio/opus", fmtp_line: ""} in room.enabled_codecs
       assert %{mime: "video/H264", fmtp_line: "profile-level-id=42e01f"} in room.enabled_codecs
-      
-      assert room.version == %{unix_micro: 1640995200000000, ticks: 1}
+
+      assert room.version == %{unix_micro: 1_640_995_200_000_000, ticks: 1}
     end
 
     test "handles room with nil enabled_codecs" do
@@ -175,7 +175,7 @@ defmodule Livekitex.TwirpUtilsTest do
           }
         ],
         metadata: "user metadata",
-        joined_at: 1640995200,
+        joined_at: 1_640_995_200,
         name: "John Doe",
         version: 1,
         permission: %Livekit.ParticipantPermission{
@@ -198,7 +198,7 @@ defmodule Livekitex.TwirpUtilsTest do
       assert participant.identity == "user123"
       assert participant.state == :ACTIVE
       assert participant.metadata == "user metadata"
-      assert participant.joined_at == 1640995200
+      assert participant.joined_at == 1_640_995_200
       assert participant.name == "John Doe"
       assert participant.version == 1
       assert participant.region == "us-west-2"
@@ -206,14 +206,14 @@ defmodule Livekitex.TwirpUtilsTest do
       assert participant.kind == :STANDARD
       assert participant.attributes == %{"role" => "host", "team" => "engineering"}
       assert participant.disconnected_at == 0
-      
+
       assert length(participant.tracks) == 1
       track = List.first(participant.tracks)
       assert track.sid == "TR_123"
       assert track.type == :AUDIO
       assert track.name == "microphone"
       assert track.muted == false
-      
+
       assert participant.permission.can_subscribe == true
       assert participant.permission.can_publish == true
       assert participant.permission.can_publish_data == true
@@ -245,7 +245,7 @@ defmodule Livekitex.TwirpUtilsTest do
 
     test "handles participant with nil attributes" do
       proto_participant = %Livekit.ParticipantInfo{
-        sid: "PA_123",  
+        sid: "PA_123",
         identity: "user123",
         attributes: nil
       }
@@ -272,8 +272,8 @@ defmodule Livekitex.TwirpUtilsTest do
             quality: :HIGH,
             width: 1920,
             height: 1080,
-            bitrate: 2000000,
-            ssrc: 123456
+            bitrate: 2_000_000,
+            ssrc: 123_456
           }
         ],
         mime_type: "video/H264",
@@ -304,15 +304,15 @@ defmodule Livekitex.TwirpUtilsTest do
       assert track.disable_red == false
       assert track.encryption == :NONE
       assert track.stream == "stream123"
-      
+
       assert length(track.layers) == 1
       layer = List.first(track.layers)
       assert layer.quality == :HIGH
       assert layer.width == 1920
       assert layer.height == 1080
-      assert layer.bitrate == 2000000
-      assert layer.ssrc == 123456
-      
+      assert layer.bitrate == 2_000_000
+      assert layer.ssrc == 123_456
+
       assert length(track.codecs) == 1
       codec = List.first(track.codecs)
       assert codec.mime == "video/H264"
@@ -445,11 +445,11 @@ defmodule Livekitex.TwirpUtilsTest do
       proto_room = %Livekit.Room{
         name: "test",
         sid: "RM_123",
-        version: %Livekit.TimedVersion{unix_micro: 1640995200000000, ticks: 42}
+        version: %Livekit.TimedVersion{unix_micro: 1_640_995_200_000_000, ticks: 42}
       }
 
       room = TwirpUtils.proto_to_room(proto_room)
-      assert room.version.unix_micro == 1640995200000000
+      assert room.version.unix_micro == 1_640_995_200_000_000
       assert room.version.ticks == 42
     end
 

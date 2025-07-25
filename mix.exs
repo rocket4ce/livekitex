@@ -47,11 +47,7 @@ defmodule Livekitex.MixProject do
       {:tesla, "~> 1.4"},
       {:finch, "~> 0.16"},
       {:plug, "~> 1.14"},
-      {:plug_cowboy, "~> 2.6"},
       {:telemetry, "~> 1.2"},
-      {:telemetry_metrics, "~> 0.6"},
-      {:telemetry_poller, "~> 1.0"},
-      {:connection, "~> 1.1"},
       {:ex_doc, "~> 0.32", only: :dev, runtime: false},
       {:mox, "~> 1.0", only: :test}
     ]

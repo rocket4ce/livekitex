@@ -6,13 +6,13 @@ defmodule Livekitex.ConfigTest do
   setup do
     # Reset runtime config before each test
     Config.reset()
-    
+
     # Clear any existing application config
     Application.delete_env(:livekitex, :api_key)
     Application.delete_env(:livekitex, :api_secret)
     Application.delete_env(:livekitex, :host)
     Application.delete_env(:livekitex, :environment)
-    
+
     # Clear environment variables
     System.delete_env("LIVEKIT_API_KEY")
     System.delete_env("LIVEKIT_API_SECRET")
@@ -26,14 +26,14 @@ defmodule Livekitex.ConfigTest do
     System.delete_env("LIVEKIT_LOG_LEVEL")
     System.delete_env("LIVEKIT_TELEMETRY_ENABLED")
     System.delete_env("LIVEKIT_WEBHOOK_TIMEOUT")
-    
+
     :ok
   end
 
   describe "get/0" do
     test "returns error when required config is missing" do
       config = Config.get()
-      
+
       # Should return error tuple when api_key is missing
       assert {:error, "API key is required"} = config
     end
@@ -42,10 +42,11 @@ defmodule Livekitex.ConfigTest do
       Application.put_env(:livekitex, :api_key, "app_key")
       Application.put_env(:livekitex, :api_secret, "app_secret")
       Application.put_env(:livekitex, :custom_field, "app_custom")
-      Application.put_env(:livekitex, :environment, :unknown)  # Use unknown env to avoid overrides
-      
+      # Use unknown env to avoid overrides
+      Application.put_env(:livekitex, :environment, :unknown)
+
       config = Config.get()
-      
+
       assert is_map(config)
       assert config.api_key == "app_key"
       assert config.api_secret == "app_secret"
@@ -67,9 +68,9 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_LOG_LEVEL", "debug")
       System.put_env("LIVEKIT_TELEMETRY_ENABLED", "false")
       System.put_env("LIVEKIT_WEBHOOK_TIMEOUT", "10000")
-      
+
       config = Config.get()
-      
+
       assert config.api_key == "env_key"
       assert config.api_secret == "env_secret"
       assert config.host == "env.example.com"
@@ -86,12 +87,13 @@ defmodule Livekitex.ConfigTest do
 
     test "runtime config has highest precedence" do
       Application.put_env(:livekitex, :api_key, "app_key")
-      Application.put_env(:livekitex, :environment, :dev)  # Override test environment
+      # Override test environment
+      Application.put_env(:livekitex, :environment, :dev)
       System.put_env("LIVEKIT_API_KEY", "env_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
       Config.put(:api_key, "runtime_key")
-      
+
       config = Config.get()
       assert is_map(config)
       assert config.api_key == "runtime_key"
@@ -101,9 +103,9 @@ defmodule Livekitex.ConfigTest do
       Application.put_env(:livekitex, :environment, :dev)
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
-      
+
       config = Config.get()
-      
+
       assert is_map(config)
       assert config.host == "localhost:7880"
       assert config.use_tls == false
@@ -116,9 +118,9 @@ defmodule Livekitex.ConfigTest do
       Application.put_env(:livekitex, :environment, :test)
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
-      
+
       config = Config.get()
-      
+
       assert is_map(config)
       assert config.host == "localhost:7880"
       assert config.use_tls == false
@@ -133,9 +135,9 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "prod.example.com")
-      
+
       config = Config.get()
-      
+
       assert is_map(config)
       assert config.use_tls == true
       assert config.log_level == :info
@@ -152,7 +154,7 @@ defmodule Livekitex.ConfigTest do
 
     test "validates config and returns error for missing api_secret" do
       System.put_env("LIVEKIT_API_KEY", "test_key")
-      
+
       config = Config.get()
       assert {:error, "API secret is required"} = config
     end
@@ -161,7 +163,7 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       Config.put(:host, nil)
-      
+
       config = Config.get()
       assert {:error, "Host is required"} = config
     end
@@ -170,7 +172,7 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       Config.put(:timeout, 0)
-      
+
       config = Config.get()
       assert {:error, "Timeout must be positive"} = config
     end
@@ -179,7 +181,7 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       Config.put(:max_retries, -1)
-      
+
       config = Config.get()
       assert {:error, "Max retries must be non-negative"} = config
     end
@@ -188,7 +190,7 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       Config.put(:retry_delay, -1)
-      
+
       config = Config.get()
       assert {:error, "Retry delay must be non-negative"} = config
     end
@@ -197,7 +199,7 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       Config.put(:connection_pool_size, 0)
-      
+
       config = Config.get()
       assert {:error, "Connection pool size must be positive"} = config
     end
@@ -206,7 +208,7 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       Config.put(:connection_pool_max_overflow, -1)
-      
+
       config = Config.get()
       assert {:error, "Connection pool max overflow must be non-negative"} = config
     end
@@ -215,9 +217,9 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
-      
+
       config = Config.get()
-      
+
       assert is_map(config)
       assert config.api_key == "test_key"
       assert config.api_secret == "test_secret"
@@ -230,18 +232,21 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
-      Application.put_env(:livekitex, :environment, :dev)  # Override test environment
-      
+      # Override test environment
+      Application.put_env(:livekitex, :environment, :dev)
+
       assert Config.get(:api_key) == "test_key"
-      assert Config.get(:timeout) == 10_000  # dev environment default
+      # dev environment default
+      assert Config.get(:timeout) == 10_000
     end
 
     test "returns default value for non-existent key" do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
-      Application.put_env(:livekitex, :environment, :dev)  # Override test environment
-      
+      # Override test environment
+      Application.put_env(:livekitex, :environment, :dev)
+
       assert Config.get(:non_existent, "default") == "default"
       assert Config.get(:non_existent) == nil
     end
@@ -251,11 +256,11 @@ defmodule Livekitex.ConfigTest do
     test "sets runtime configuration value" do
       assert :ok = Config.put(:api_key, "runtime_key")
       assert :ok = Config.put(:timeout, 60_000)
-      
+
       # Should be able to retrieve the values
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
-      
+
       config = Config.get()
       assert config.api_key == "runtime_key"
       assert config.timeout == 60_000
@@ -265,7 +270,7 @@ defmodule Livekitex.ConfigTest do
   describe "get_env_config/1" do
     test "returns dev environment config" do
       config = Config.get_env_config(:dev)
-      
+
       assert config.host == "localhost:7880"
       assert config.use_tls == false
       assert config.log_level == :debug
@@ -275,7 +280,7 @@ defmodule Livekitex.ConfigTest do
 
     test "returns test environment config" do
       config = Config.get_env_config(:test)
-      
+
       assert config.host == "localhost:7880"
       assert config.use_tls == false
       assert config.log_level == :warning
@@ -286,7 +291,7 @@ defmodule Livekitex.ConfigTest do
 
     test "returns prod environment config" do
       config = Config.get_env_config(:prod)
-      
+
       assert config.use_tls == true
       assert config.log_level == :info
       assert config.telemetry_enabled == true
@@ -306,8 +311,9 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
-      Application.put_env(:livekitex, :environment, :dev)  # Override test environment
-      
+      # Override test environment
+      Application.put_env(:livekitex, :environment, :dev)
+
       result = Config.validate()
       assert is_map(result)
       assert result.api_key == "test_key"
@@ -324,15 +330,16 @@ defmodule Livekitex.ConfigTest do
     test "clears runtime configuration" do
       Config.put(:api_key, "runtime_key")
       assert :ok = Config.reset()
-      
+
       # Runtime config should be cleared
       # But we still need valid config for get() to work
       System.put_env("LIVEKIT_API_KEY", "env_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
-      
+
       config = Config.get()
-      assert config.api_key == "env_key"  # Should use env, not runtime
+      # Should use env, not runtime
+      assert config.api_key == "env_key"
     end
   end
 
@@ -341,9 +348,9 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
-      
+
       client_config = Config.client_config()
-      
+
       assert client_config.api_key == "test_key"
       assert client_config.api_secret == "test_secret"
       assert client_config.host == "test.example.com"
@@ -356,11 +363,13 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
-      Application.put_env(:livekitex, :environment, :dev)  # Override test environment
-      
+      # Override test environment
+      Application.put_env(:livekitex, :environment, :dev)
+
       options = Config.grpc_options()
-      
-      assert options[:timeout] == 10_000  # dev environment default
+
+      # dev environment default
+      assert options[:timeout] == 10_000
       assert options[:max_retries] == 3
       assert options[:retry_delay] == 1000
       assert options[:pool_size] == 10
@@ -371,12 +380,12 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
-      
+
       Config.put(:timeout, 60_000)
       Config.put(:max_retries, 10)
-      
+
       options = Config.grpc_options()
-      
+
       assert options[:timeout] == 60_000
       assert options[:max_retries] == 10
     end
@@ -387,93 +396,98 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
-      
+
       # Test various boolean representations
       System.put_env("LIVEKIT_USE_TLS", "true")
       assert Config.get(:use_tls) == true
-      
+
       System.put_env("LIVEKIT_USE_TLS", "false")
       assert Config.get(:use_tls) == false
-      
+
       System.put_env("LIVEKIT_USE_TLS", "1")
       assert Config.get(:use_tls) == true
-      
+
       System.put_env("LIVEKIT_USE_TLS", "0")
       assert Config.get(:use_tls) == false
-      
+
       System.put_env("LIVEKIT_USE_TLS", "invalid")
       # Should fall back to default
       config = Config.get()
-      assert config.use_tls == false  # default value
+      # default value
+      assert config.use_tls == false
     end
 
     test "parses integer values correctly" do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
-      
+
       # Set environment to dev to avoid test environment overrides
       Application.put_env(:livekitex, :environment, :dev)
-      
+
       System.put_env("LIVEKIT_TIMEOUT", "45000")
       assert Config.get(:timeout) == 45000
-      
+
       System.put_env("LIVEKIT_TIMEOUT", "invalid")
       # Should fall back to dev environment default
       config = Config.get()
-      assert config.timeout == 10_000  # dev environment default
-      
+      # dev environment default
+      assert config.timeout == 10_000
+
       System.put_env("LIVEKIT_TIMEOUT", "123abc")
       # Should fall back to dev environment default for partial numbers
       config = Config.get()
-      assert config.timeout == 10_000  # dev environment default
+      # dev environment default
+      assert config.timeout == 10_000
     end
 
     test "parses log level values correctly" do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
-      
+
       # Set environment to dev to avoid test environment overrides
       Application.put_env(:livekitex, :environment, :dev)
-      
+
       System.put_env("LIVEKIT_LOG_LEVEL", "debug")
       assert Config.get(:log_level) == :debug
-      
+
       System.put_env("LIVEKIT_LOG_LEVEL", "info")
       assert Config.get(:log_level) == :info
-      
+
       System.put_env("LIVEKIT_LOG_LEVEL", "warning")
       assert Config.get(:log_level) == :warning
-      
+
       System.put_env("LIVEKIT_LOG_LEVEL", "warn")
       assert Config.get(:log_level) == :warning
-      
+
       System.put_env("LIVEKIT_LOG_LEVEL", "error")
       assert Config.get(:log_level) == :error
-      
+
       System.put_env("LIVEKIT_LOG_LEVEL", "invalid")
       # Should fall back to dev environment default (since we're in dev)
       config = Config.get()
-      assert config.log_level == :debug  # dev environment default
+      # dev environment default
+      assert config.log_level == :debug
     end
 
     test "ignores nil environment variables" do
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
-      
+
       # Set environment to dev to avoid test environment overrides
       Application.put_env(:livekitex, :environment, :dev)
-      
+
       # Ensure these env vars don't exist
       System.delete_env("LIVEKIT_TIMEOUT")
       System.delete_env("LIVEKIT_USE_TLS")
-      
+
       config = Config.get()
-      
+
       # Should use dev environment defaults
-      assert config.timeout == 10_000  # dev environment default
+      # dev environment default
+      assert config.timeout == 10_000
       assert config.use_tls == false
     end
   end
@@ -484,7 +498,7 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_KEY", "env_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
-      
+
       config = Config.get()
       assert config.api_key == "env_key"
     end
@@ -494,7 +508,7 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
       Config.put(:api_key, "runtime_key")
-      
+
       config = Config.get()
       assert config.api_key == "runtime_key"
     end
@@ -504,7 +518,7 @@ defmodule Livekitex.ConfigTest do
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
       System.put_env("LIVEKIT_HOST", "test.example.com")
       Config.put(:api_key, "runtime_key")
-      
+
       config = Config.get()
       assert config.api_key == "runtime_key"
     end
@@ -513,9 +527,9 @@ defmodule Livekitex.ConfigTest do
       Application.put_env(:livekitex, :environment, :test)
       System.put_env("LIVEKIT_API_KEY", "test_key")
       System.put_env("LIVEKIT_API_SECRET", "test_secret")
-      
+
       config = Config.get()
-      
+
       # Should have test environment defaults
       assert is_map(config)
       assert config.host == "localhost:7880"
