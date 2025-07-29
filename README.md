@@ -23,7 +23,7 @@ Add `livekitex` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:livekitex, "~> 0.1.0"}
+    {:livekitex, "~> 0.1.2"}
   ]
 end
 ```
@@ -135,7 +135,7 @@ IO.puts("Creation time: #{room.creation_time}")
 
 # Filter rooms by name
 {:ok, filtered_rooms} = Livekitex.RoomService.list_rooms(
-  room_service, 
+  room_service,
   names: ["room1", "room2", "room3"]
 )
 
@@ -183,7 +183,7 @@ end)
 # Unmute a participant's video track
 {:ok, track} = Livekitex.RoomService.mute_published_track(
   room_service,
-  "my-room", 
+  "my-room",
   "user123",
   "track_sid_video",
   false  # muted = false
@@ -490,7 +490,7 @@ defmodule MyAppWeb.RoomLive do
         # Generate access token for the user
         {:ok, token, _} = TokenGenerator.generate_token(user_id, :presenter, room_id)
 
-        socket = 
+        socket =
           socket
           |> assign(:room_id, room_id)
           |> assign(:user_id, user_id)
@@ -512,8 +512,8 @@ defmodule MyAppWeb.RoomLive do
         <h1 class="text-2xl font-bold">Room: <%= @room_id %></h1>
         <p>User: <%= @user_id %></p>
       </div>
-      
-      <div id="video-container" class="flex-1" phx-hook="LiveKitRoom" 
+
+      <div id="video-container" class="flex-1" phx-hook="LiveKitRoom"
            data-room-id={@room_id} data-access-token={@access_token}>
         <!-- LiveKit will render video elements here -->
       </div>
@@ -536,7 +536,7 @@ defmodule MyApp.Workers.RoomCleanup do
     case LiveKitManager.list_rooms() do
       {:ok, rooms} ->
         empty_rooms = Enum.filter(rooms, fn room -> room.num_participants == 0 end)
-        
+
         Enum.each(empty_rooms, fn room ->
           case LiveKitManager.delete_room(room.name) do
             :ok ->
@@ -661,7 +661,7 @@ This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENS
 ## 🙏 Acknowledgments
 
 - [LiveKit](https://livekit.io/) for the excellent WebRTC infrastructure
-- [Twirp](https://github.com/keathley/twirp-elixir) for the Elixir Twirp implementation  
+- [Twirp](https://github.com/keathley/twirp-elixir) for the Elixir Twirp implementation
 - [Tesla](https://github.com/elixir-tesla/tesla) for the HTTP client
 - [Finch](https://github.com/sneako/finch) for HTTP connection pooling
 
