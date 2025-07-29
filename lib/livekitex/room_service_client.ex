@@ -64,10 +64,10 @@ defmodule Livekitex.RoomServiceClient do
   defp parse_twirp_error(error_body) do
     case Jason.decode(error_body) do
       {:ok, %{"code" => code, "msg" => msg}} ->
-        %Twirp.Error{code: String.to_atom(code), msg: msg}
+        %{code: String.to_atom(code), msg: msg}
 
       _ ->
-        %Twirp.Error{code: :internal, msg: "Unknown error"}
+        %{code: :internal, msg: "Unknown error"}
     end
   end
 end

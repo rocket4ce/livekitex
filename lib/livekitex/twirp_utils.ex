@@ -10,7 +10,7 @@ defmodule Livekitex.TwirpUtils do
   """
   def handle_twirp_response({:ok, response}), do: {:ok, response}
 
-  def handle_twirp_response({:error, %Twirp.Error{} = error}) do
+  def handle_twirp_response({:error, %{code: _, msg: _} = error}) do
     Logger.error("Twirp error: #{inspect(error)}")
     {:error, format_twirp_error(error)}
   end
@@ -23,7 +23,7 @@ defmodule Livekitex.TwirpUtils do
   @doc """
   Formats Twirp errors into more user-friendly error tuples.
   """
-  def format_twirp_error(%Twirp.Error{code: code, msg: message}) do
+  def format_twirp_error(%{code: code, msg: message}) do
     case code do
       :unauthenticated -> {:unauthenticated, message}
       :permission_denied -> {:permission_denied, message}
