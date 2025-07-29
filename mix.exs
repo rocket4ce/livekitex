@@ -39,11 +39,10 @@ defmodule Livekitex.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:protobuf, "~> 0.14.1"},
+      {:protobuf, "~> 0.14.1", override: true},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:joken, "~> 2.6"},
       {:jason, "~> 1.4"},
-      {:twirp, "~> 0.8"},
       {:tesla, "~> 1.4"},
       {:finch, "~> 0.16"},
       {:plug, "~> 1.14"},
