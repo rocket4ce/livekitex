@@ -4,7 +4,7 @@ defmodule Livekitex.MixProject do
   def project do
     [
       app: :livekitex,
-      version: "0.1.32",
+      version: "0.1.33",
       elixir: "~> 1.18",
       deps: deps(),
       description: description(),
