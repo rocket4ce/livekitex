@@ -4,7 +4,7 @@ defmodule Livekitex.MixProject do
   def project do
     [
       app: :livekitex,
-      version: "0.1.31",
+      version: "0.1.32",
       elixir: "~> 1.18",
       deps: deps(),
       description: description(),
@@ -38,7 +38,7 @@ defmodule Livekitex.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:protobuf, "~> 0.14.1", runtime: false},
+      {:protobuf, "~> 0.14.1", runtime: false, override: true},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:joken, "~> 2.6"},
       {:jason, "~> 1.4"},
@@ -47,8 +47,7 @@ defmodule Livekitex.MixProject do
       {:plug, "~> 1.14"},
       {:telemetry, "~> 1.2"},
       {:ex_doc, "~> 0.32", only: :dev, runtime: false},
-      {:mox, "~> 1.0", only: :test},
-      {:twirp, "~> 0.8"}
+      {:mox, "~> 1.0", only: :test}
     ]
   end
 end
