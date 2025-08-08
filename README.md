@@ -646,7 +646,143 @@ The test suite includes integration tests that can run against a live LiveKit se
    mix test
    ```
 
-## 📥 Record/download video with Egress (S3 or local)
+## � Telemetry and Phoenix LiveDashboard
+
+LiveKitEx emits Telemetry events you can visualize in Phoenix LiveDashboard and/or export via your preferred metrics backend.
+
+### Emitted events
+
+The library emits the following Telemetry events out of the box:
+
+- `[:livekitex, :operation, :start]`
+  - measurements: `%{system_time: integer}`
+  - metadata: `%{operation: String.t(), operation_id: String.t(), ...}`
+- `[:livekitex, :operation, :stop]`
+  - measurements: `%{duration: integer, system_time: integer}` — duration in milliseconds
+  - metadata: `%{operation: String.t(), operation_id: String.t(), duration_ms: integer, ...}`
+- `[:livekitex, :grpc, :call]`
+  - measurements: `%{system_time: integer}`
+  - metadata: `%{service: String.t(), method: String.t(), request_size: non_neg_integer, response_size: non_neg_integer, ...}`
+- `[:livekitex, :webhook, :processed]`
+  - measurements: `%{system_time: integer}`
+  - metadata: `%{event_type: String.t(), result: term(), ...}`
+- `[:livekitex, :connection, :connect|:disconnect|:reconnect]`
+  - measurements: `%{system_time: integer}`
+  - metadata: `%{host: String.t(), event: atom(), ...}`
+- `[:livekitex, :log]`
+  - measurements: `%{system_time: integer}`
+  - metadata: `%{level: atom(), message: String.t(), ...}`
+
+Note: Telemetry.Metrics works with measurements (not metadata) for aggregations. For counts grouped by tags, you can use `tags` derived from metadata (e.g., `:service`, `:method`).
+
+### Phoenix setup (example)
+
+Add these dependencies to your Phoenix app (if not already present):
+
+```elixir
+def deps do
+  [
+    {:phoenix_live_dashboard, "~> 0.8"},
+    {:telemetry_metrics, "~> 0.6"},
+    {:telemetry_poller, "~> 1.0"}
+  ]
+end
+```
+
+Define metrics for the LiveKitEx events in your Telemetry module, typically `MyAppWeb.Telemetry`:
+
+```elixir
+defmodule MyAppWeb.Telemetry do
+  use Supervisor
+  import Telemetry.Metrics
+
+  def start_link(arg), do: Supervisor.start_link(__MODULE__, arg, name: __MODULE__)
+
+  @impl true
+  def init(_arg) do
+    children = [
+      # If you already use Telemetry.Poller, keep your existing config
+      # {Telemetry.Poller, measurements: [], period: 10_000}
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
+  end
+
+  # Exposed to Phoenix LiveDashboard: metrics: {MyAppWeb.Telemetry, :metrics}
+  def metrics do
+    [
+      # Operation duration (ms) by operation name
+      summary("livekitex.operation.stop.duration",
+        event_name: [:livekitex, :operation, :stop],
+        measurement: :duration,
+        unit: :millisecond,
+        tags: [:operation]
+      ),
+
+      # gRPC/Twirp call count by service/method
+      counter("livekitex.grpc.call.count",
+        event_name: [:livekitex, :grpc, :call],
+        tags: [:service, :method]
+      ),
+
+      # Webhook processing results by type/result
+      counter("livekitex.webhook.processed.count",
+        event_name: [:livekitex, :webhook, :processed],
+        tags: [:event_type, :result]
+      ),
+
+      # Connection lifecycle events
+      counter("livekitex.connection.connect.count",
+        event_name: [:livekitex, :connection, :connect],
+        tags: [:host]
+      ),
+      counter("livekitex.connection.disconnect.count",
+        event_name: [:livekitex, :connection, :disconnect],
+        tags: [:host]
+      ),
+      counter("livekitex.connection.reconnect.count",
+        event_name: [:livekitex, :connection, :reconnect],
+        tags: [:host]
+      ),
+
+      # Library log activity by level
+      counter("livekitex.log.count",
+        event_name: [:livekitex, :log],
+        tags: [:level]
+      )
+    ]
+  end
+end
+```
+
+Wire it into the LiveDashboard in your Phoenix router (commonly only in `:dev`):
+
+```elixir
+# router.ex
+import Phoenix.LiveDashboard.Router
+
+scope "/" do
+  pipe_through [:browser]
+  live_dashboard "/dashboard", metrics: {MyAppWeb.Telemetry, :metrics}
+end
+```
+
+Navigate to `/dashboard` → Metrics to see the graphs.
+
+### Enabling/disabling Telemetry inside LiveKitEx
+
+You can control event emission from this library:
+
+- Configure via app env: `config :livekitex, telemetry_enabled: true | false`
+- Or environment variable: `LIVEKIT_TELEMETRY_ENABLED=true | false`
+
+Optional: For extra local traces about Telemetry handler activity, you can attach the built-in handler at runtime:
+
+```elixir
+Livekitex.Logger.setup_telemetry()
+```
+
+## �📥 Record/download video with Egress (S3 or local)
 
 This section shows how to start an egress and get a downloadable video file, either uploading to S3 in production or writing to the local filesystem in development.
 
