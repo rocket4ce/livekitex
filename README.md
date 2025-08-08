@@ -646,6 +646,161 @@ The test suite includes integration tests that can run against a live LiveKit se
    mix test
    ```
 
+## 📥 Record/download video with Egress (S3 or local)
+
+This section shows how to start an egress and get a downloadable video file, either uploading to S3 in production or writing to the local filesystem in development.
+
+Quick notes:
+- Ensure Egress is available: LiveKit Cloud includes it; for self-hosting, deploy the Egress service separately.
+- The access token used with Egress must include roomRecord permission. This SDK generates a suitable token internally when you call `Livekitex.egress_service()`.
+- Files are written where the Egress service runs. “Local” means the Egress server’s filesystem (handy when running Egress on your dev machine or mounting a shared volume).
+
+### Which Egress type?
+- Room Composite: records the entire room with a layout (great for meeting recordings).
+- Participant: records one participant’s audio+video.
+- Track Composite: combines one audio + one video track.
+- Track: exports a single track (video is not transcoded).
+
+Examples below use Room Composite. You can adapt the request using the structs in `lib/livekit_egress.pb.ex`.
+
+### Development: save to local filesystem
+
+Example: record the whole room to a local MP4 using filename templates.
+
+```elixir
+alias Livekitex.EgressService
+
+egress = Livekitex.egress_service()
+
+request = %Livekit.RoomCompositeEgressRequest{
+  room_name: "my-room",
+  layout: "grid", # optional
+  file_outputs: [
+    %Livekit.EncodedFileOutput{
+      # supports templates: {room_name}, {time}, etc.
+      filepath: "tmp/recordings/{room_name}-{time}.mp4"
+      # disable_manifest: true # if you don’t want the metadata .json
+    }
+  ]
+  # you can also add stream_outputs / segment_outputs / image_outputs
+}
+
+{:ok, info} = EgressService.start_room_composite_egress(egress, request)
+
+# When finished, inspect file results
+# info.file_results -> [%Livekit.FileInfo{filename: ..., location: ...}]
+```
+
+Tips:
+- If `filepath` ends with `/`, the file will be created inside that directory.
+- If the extension is missing or wrong, Egress will add the correct one.
+
+### Production: upload to S3 (or S3-compatible)
+
+Example: record the room and upload the MP4 to S3. For S3-compatible providers (MinIO, R2, etc.), use `endpoint` and `force_path_style` as needed.
+
+```elixir
+alias Livekitex.EgressService
+
+egress = Livekitex.egress_service()
+
+request = %Livekit.RoomCompositeEgressRequest{
+  room_name: "my-room",
+  layout: "grid",
+  file_outputs: [
+    %Livekit.EncodedFileOutput{
+      filepath: "recordings/{room_name}-{time}.mp4",
+      s3: %Livekit.S3Upload{
+        access_key: System.get_env("S3_ACCESS_KEY"),
+        secret: System.get_env("S3_SECRET"),
+        bucket: System.get_env("S3_BUCKET"),
+        region: System.get_env("S3_REGION"), # required if no endpoint
+        endpoint: System.get_env("S3_ENDPOINT"), # optional (https://...)
+        force_path_style: System.get_env("S3_FORCE_PATH_STYLE") == "true"
+      }
+    }
+  ]
+}
+
+{:ok, info} = EgressService.start_room_composite_egress(egress, request)
+```
+
+Useful S3 fields (see docs):
+- access_key, secret, bucket, region
+- endpoint (for S3-compatible; must start with https://)
+- force_path_style (true for MinIO and others)
+- metadata / tagging (optional metadata)
+
+### Environment-based switch (example)
+
+Choose destination dynamically via env/config:
+
+```elixir
+defmodule MyApp.Egress do
+  def encoded_file_output(:local) do
+    %Livekit.EncodedFileOutput{filepath: "tmp/recordings/{room_name}-{time}.mp4"}
+  end
+
+  def encoded_file_output(:s3) do
+    %Livekit.EncodedFileOutput{
+      filepath: "recordings/{room_name}-{time}.mp4",
+      s3: %Livekit.S3Upload{
+        access_key: System.fetch_env!("S3_ACCESS_KEY"),
+        secret: System.fetch_env!("S3_SECRET"),
+        bucket: System.fetch_env!("S3_BUCKET"),
+        region: System.get_env("S3_REGION"),
+        endpoint: System.get_env("S3_ENDPOINT"),
+        force_path_style: System.get_env("S3_FORCE_PATH_STYLE") == "true"
+      }
+    }
+  end
+
+  def start_room_recording(room_name, target \\ target_from_env()) do
+    egress = Livekitex.egress_service()
+    req = %Livekit.RoomCompositeEgressRequest{
+      room_name: room_name,
+      layout: "grid",
+      file_outputs: [encoded_file_output(target)]
+    }
+    Livekitex.EgressService.start_room_composite_egress(egress, req)
+  end
+
+  defp target_from_env do
+    case System.get_env("EGRESS_TARGET", "local") do
+      "s3" -> :s3
+      _ -> :local
+    end
+  end
+end
+```
+
+### Query status, list, and stop
+
+```elixir
+# List active egress
+{:ok, list} = Livekitex.EgressService.list_egress(
+  Livekitex.egress_service(),
+  %Livekit.ListEgressRequest{room_name: "my-room"}
+)
+
+# Stop by ID
+case Livekitex.EgressService.stop_egress(
+       Livekitex.egress_service(),
+       %Livekit.StopEgressRequest{egress_id: "EG_xxx"}
+     ) do
+  {:ok, _info} -> :ok
+  {:error, reason} -> raise "Failed to stop egress: #{inspect(reason)}"
+end
+```
+
+### Filename templating
+
+Use variables like `{room_name}`, `{room_id}`, `{publisher_identity}`, `{track_id}`, `{time}` in `filepath` / `filename_prefix`. If you omit `filepath`, a default like `"{room_name}-{time}.mp4"` is generated.
+
+More details and output combinations (RTMP/HLS/images) in the official Egress docs:
+- Overview, API, outputs: https://docs.livekit.io/home/egress/overview/ • https://docs.livekit.io/home/egress/api/ • https://docs.livekit.io/home/egress/outputs/
+- Examples: https://docs.livekit.io/home/egress/examples/
+
 ## 🤝 Contributing
 
 1. Fork the repository
