@@ -75,14 +75,14 @@ defmodule Livekitex.ConfigTest do
       assert config.api_secret == "env_secret"
       assert config.host == "env.example.com"
       assert config.use_tls == true
-      assert config.timeout == 60000
+      assert config.timeout == 60_000
       assert config.max_retries == 5
       assert config.retry_delay == 2000
       assert config.connection_pool_size == 20
       assert config.connection_pool_max_overflow == 10
       assert config.log_level == :debug
       assert config.telemetry_enabled == false
-      assert config.webhook_timeout == 10000
+      assert config.webhook_timeout == 10_000
     end
 
     test "runtime config has highest precedence" do
@@ -426,7 +426,7 @@ defmodule Livekitex.ConfigTest do
       Application.put_env(:livekitex, :environment, :dev)
 
       System.put_env("LIVEKIT_TIMEOUT", "45000")
-      assert Config.get(:timeout) == 45000
+      assert Config.get(:timeout) == 45_000
 
       System.put_env("LIVEKIT_TIMEOUT", "invalid")
       # Should fall back to dev environment default

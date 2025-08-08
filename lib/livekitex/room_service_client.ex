@@ -33,25 +33,7 @@ defmodule Livekitex.RoomServiceClient do
 
     case Tesla.post(client, path, body, headers: headers) do
       {:ok, %Tesla.Env{status: 200, body: response_body}} ->
-        case path do
-          "/twirp/livekit.RoomService/CreateRoom" ->
-            {:ok, Protobuf.decode(response_body, Livekit.Room)}
-
-          "/twirp/livekit.RoomService/ListRooms" ->
-            {:ok, Protobuf.decode(response_body, Livekit.ListRoomsResponse)}
-
-          "/twirp/livekit.RoomService/DeleteRoom" ->
-            {:ok, Protobuf.decode(response_body, Livekit.DeleteRoomResponse)}
-
-          "/twirp/livekit.RoomService/ListParticipants" ->
-            {:ok, Protobuf.decode(response_body, Livekit.ListParticipantsResponse)}
-
-          "/twirp/livekit.RoomService/RemoveParticipant" ->
-            {:ok, Protobuf.decode(response_body, Livekit.RemoveParticipantResponse)}
-
-          "/twirp/livekit.RoomService/MutePublishedTrack" ->
-            {:ok, Protobuf.decode(response_body, Livekit.MuteRoomTrackResponse)}
-        end
+        {:ok, Protobuf.decode(response_body, response_type_for(path))}
 
       {:ok, %Tesla.Env{body: error_body}} ->
         {:error, parse_twirp_error(error_body)}
@@ -60,6 +42,23 @@ defmodule Livekitex.RoomServiceClient do
         {:error, reason}
     end
   end
+
+  defp response_type_for("/twirp/livekit.RoomService/CreateRoom"), do: Livekit.Room
+
+  defp response_type_for("/twirp/livekit.RoomService/ListRooms"),
+    do: Livekit.ListRoomsResponse
+
+  defp response_type_for("/twirp/livekit.RoomService/DeleteRoom"),
+    do: Livekit.DeleteRoomResponse
+
+  defp response_type_for("/twirp/livekit.RoomService/ListParticipants"),
+    do: Livekit.ListParticipantsResponse
+
+  defp response_type_for("/twirp/livekit.RoomService/RemoveParticipant"),
+    do: Livekit.RemoveParticipantResponse
+
+  defp response_type_for("/twirp/livekit.RoomService/MutePublishedTrack"),
+    do: Livekit.MuteRoomTrackResponse
 
   defp parse_twirp_error(error_body) do
     case Jason.decode(error_body) do

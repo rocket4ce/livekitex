@@ -24,16 +24,20 @@ defmodule Livekitex.TwirpUtils do
   Formats Twirp errors into more user-friendly error tuples.
   """
   def format_twirp_error(%{code: code, msg: message}) do
-    case code do
-      :unauthenticated -> {:unauthenticated, message}
-      :permission_denied -> {:permission_denied, message}
-      :not_found -> {:not_found, message}
-      :already_exists -> {:already_exists, message}
-      :invalid_argument -> {:invalid_argument, message}
-      :unavailable -> {:unavailable, message}
-      :deadline_exceeded -> {:deadline_exceeded, message}
-      :internal -> {:internal_error, message}
-      _ -> {:twirp_error, {code, message}}
+    mapping = %{
+      unauthenticated: :unauthenticated,
+      permission_denied: :permission_denied,
+      not_found: :not_found,
+      already_exists: :already_exists,
+      invalid_argument: :invalid_argument,
+      unavailable: :unavailable,
+      deadline_exceeded: :deadline_exceeded,
+      internal: :internal_error
+    }
+
+    case Map.get(mapping, code) do
+      nil -> {:twirp_error, {code, message}}
+      mapped -> {mapped, message}
     end
   end
 

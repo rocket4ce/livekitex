@@ -283,44 +283,69 @@ defmodule Livekitex.Config do
   end
 
   defp validate_config(config) do
-    cond do
-      is_nil(config.api_key) ->
-        Logger.warning("API key is not configured")
-        {:error, "API key is required"}
+    with :ok <- require_field(config.api_key, "API key is required", "API key is not configured"),
+         :ok <-
+           require_field(
+             config.api_secret,
+             "API secret is required",
+             "API secret is not configured"
+           ),
+         :ok <- require_field(config.host, "Host is required", "Host is not configured"),
+         :ok <- positive(config.timeout, "Timeout must be positive", "Invalid timeout value"),
+         :ok <-
+           non_negative(
+             config.max_retries,
+             "Max retries must be non-negative",
+             "Invalid max_retries value"
+           ),
+         :ok <-
+           non_negative(
+             config.retry_delay,
+             "Retry delay must be non-negative",
+             "Invalid retry_delay value"
+           ),
+         :ok <-
+           positive(
+             config.connection_pool_size,
+             "Connection pool size must be positive",
+             "Invalid connection_pool_size value"
+           ),
+         :ok <-
+           non_negative(
+             config.connection_pool_max_overflow,
+             "Connection pool max overflow must be non-negative",
+             "Invalid connection_pool_max_overflow value"
+           ) do
+      config
+    else
+      {:error, _} = error -> error
+    end
+  end
 
-      is_nil(config.api_secret) ->
-        Logger.warning("API secret is not configured")
-        {:error, "API secret is required"}
+  defp require_field(value, error_msg, warn_prefix) do
+    if is_nil(value) do
+      Logger.warning("#{warn_prefix}")
+      {:error, error_msg}
+    else
+      :ok
+    end
+  end
 
-      is_nil(config.host) ->
-        Logger.warning("Host is not configured")
-        {:error, "Host is required"}
+  defp positive(value, error_msg, warn_prefix) when is_number(value) do
+    if value > 0 do
+      :ok
+    else
+      Logger.warning("#{warn_prefix}: #{value}")
+      {:error, error_msg}
+    end
+  end
 
-      config.timeout <= 0 ->
-        Logger.warning("Invalid timeout value: #{config.timeout}")
-        {:error, "Timeout must be positive"}
-
-      config.max_retries < 0 ->
-        Logger.warning("Invalid max_retries value: #{config.max_retries}")
-        {:error, "Max retries must be non-negative"}
-
-      config.retry_delay < 0 ->
-        Logger.warning("Invalid retry_delay value: #{config.retry_delay}")
-        {:error, "Retry delay must be non-negative"}
-
-      config.connection_pool_size <= 0 ->
-        Logger.warning("Invalid connection_pool_size value: #{config.connection_pool_size}")
-        {:error, "Connection pool size must be positive"}
-
-      config.connection_pool_max_overflow < 0 ->
-        Logger.warning(
-          "Invalid connection_pool_max_overflow value: #{config.connection_pool_max_overflow}"
-        )
-
-        {:error, "Connection pool max overflow must be non-negative"}
-
-      true ->
-        config
+  defp non_negative(value, error_msg, warn_prefix) when is_number(value) do
+    if value >= 0 do
+      :ok
+    else
+      Logger.warning("#{warn_prefix}: #{value}")
+      {:error, error_msg}
     end
   end
 
