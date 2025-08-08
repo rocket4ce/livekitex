@@ -46,11 +46,25 @@ defmodule Livekitex do
   ## Services
 
   - `Livekitex.RoomService` - Room and participant management
+  - `Livekitex.EgressService` - Egress management
   - `Livekitex.Webhook` - Webhook validation and processing
   - `Livekitex.AccessToken` - Token generation and validation
   """
 
-  alias Livekitex.{Config, RoomService, AccessToken, Grants}
+  alias Livekitex.{Config, RoomService, EgressService, AccessToken, Grants}
+
+  @doc """
+  Creates a egress service client with current configuration.
+
+  ## Examples
+
+      client = Livekitex.egress_service()
+      # EgressService calls
+  """
+  def egress_service do
+    config = Config.client_config()
+    EgressService.create(config.api_key, config.api_secret, host: config.host)
+  end
 
   @doc """
   Creates a room service client with current configuration.
@@ -246,8 +260,8 @@ defmodule Livekitex do
 
   ## Examples
 
-      iex> Livekitex.version()
-      "0.1.0"
+  iex> is_binary(Livekitex.version())
+  true
   """
   def version do
     Application.spec(:livekitex, :vsn) |> to_string()

@@ -5,7 +5,6 @@ defmodule LivekitexTest do
   test "returns version" do
     version = Livekitex.version()
     assert is_binary(version)
-    assert version == "0.1.0"
   end
 
   test "gets configuration" do

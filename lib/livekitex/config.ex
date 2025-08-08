@@ -340,8 +340,6 @@ defmodule Livekitex.Config do
     end
   end
 
-  defp parse_integer(_), do: nil
-
   defp parse_log_level(nil), do: nil
   defp parse_log_level("debug"), do: :debug
   defp parse_log_level("info"), do: :info

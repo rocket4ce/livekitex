@@ -23,7 +23,7 @@ Add `livekitex` to your list of dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:livekitex, "~> 0.1.2"}
+  {:livekitex, "~> 0.1.3"}
   ]
 end
 ```
