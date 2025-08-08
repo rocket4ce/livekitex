@@ -801,6 +801,68 @@ More details and output combinations (RTMP/HLS/images) in the official Egress do
 - Overview, API, outputs: https://docs.livekit.io/home/egress/overview/ • https://docs.livekit.io/home/egress/api/ • https://docs.livekit.io/home/egress/outputs/
 - Examples: https://docs.livekit.io/home/egress/examples/
 
+### Bonus: HLS segments (record as HLS)
+
+Record the room as HLS segments (playlist + .ts segments). You can store locally or in S3. Below shows S3:
+
+```elixir
+alias Livekitex.EgressService
+
+egress = Livekitex.egress_service()
+
+request = %Livekit.RoomCompositeEgressRequest{
+  room_name: "my-room",
+  layout: "grid",
+  segment_outputs: [
+    %Livekit.SegmentedFileOutput{
+      filename_prefix: "hls/{room_name}/{time}",
+      playlist_name: "index.m3u8",
+      segment_duration: 2,
+      s3: %Livekit.S3Upload{
+        access_key: System.get_env("S3_ACCESS_KEY"),
+        secret: System.get_env("S3_SECRET"),
+        bucket: System.get_env("S3_BUCKET"),
+        region: System.get_env("S3_REGION"),
+        endpoint: System.get_env("S3_ENDPOINT"),
+        force_path_style: System.get_env("S3_FORCE_PATH_STYLE") == "true"
+      }
+    }
+  ]
+}
+
+{:ok, info} = EgressService.start_room_composite_egress(egress, request)
+```
+
+Notes:
+- For local storage, omit `s3` and use a local `filename_prefix` (e.g., `"tmp/hls/{room_name}/{time}"`).
+- You may also set `live_playlist_name` if supported to generate a short “live” playlist.
+
+### Bonus: RTMP streaming
+
+Start a composite egress and stream to an RTMP endpoint (e.g., YouTube/Twitch). You can optionally also record to file/segments at the same time.
+
+```elixir
+alias Livekitex.EgressService
+
+egress = Livekitex.egress_service()
+
+request = %Livekit.RoomCompositeEgressRequest{
+  room_name: "my-room",
+  layout: "grid",
+  stream_outputs: [
+    %Livekit.StreamOutput{
+      protocol: :RTMP,
+      urls: ["rtmps://a.rtmp.youtube.com/live2/your-stream-key"]
+    }
+  ]
+}
+
+{:ok, info} = EgressService.start_room_composite_egress(egress, request)
+```
+
+Tip:
+- To add/remove RTMP URLs later, use `UpdateStream` API via `Livekitex.EgressService.update_stream/2` with `add_output_urls`/`remove_output_urls`.
+
 ## 🤝 Contributing
 
 1. Fork the repository
