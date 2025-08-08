@@ -40,7 +40,6 @@ defmodule Livekitex.Webhook do
       {:ok, event}
     else
       {:error, reason} -> {:error, reason}
-      error -> {:error, error}
     end
   end
 
