@@ -15,6 +15,7 @@ A comprehensive Elixir SDK for [LiveKit](https://livekit.io/), an open-source We
 - **Modern HTTP-based Communication** - Uses Twirp over HTTP instead of gRPC
 - **Comprehensive Error Handling** - Detailed error responses and logging
 - **Production Ready** - Built with Tesla and Finch for reliable HTTP communication
+- **SIP Telephony** - Manage SIP trunks, dispatch rules, and participants (calls) via Twirp JSON
 
 ## 📦 Installation
 
@@ -51,6 +52,7 @@ Or use environment variables:
 config :livekitex,
   api_key: System.get_env("LIVEKIT_API_KEY"),
   api_secret: System.get_env("LIVEKIT_API_SECRET"),
+  # For LiveKit Cloud, set LIVEKIT_HOST to your cloud domain, e.g. "your-project.livekit.cloud"
   host: System.get_env("LIVEKIT_HOST", "localhost"),
   port: String.to_integer(System.get_env("LIVEKIT_PORT", "7880"))
 ```
@@ -522,6 +524,103 @@ defmodule MyAppWeb.RoomLive do
   end
 end
 ```
+
+## 📞 SIP Telephony (Trunks, Dispatch Rules, Calls)
+
+LiveKit’s SIP API is available via Twirp JSON endpoints. This library provides a simple wrapper around those endpoints using Tesla/Finch.
+
+Important:
+- Use your API key/secret from environment variables; do not hardcode secrets.
+- For LiveKit Cloud, the base URL uses HTTPS with your cloud domain (e.g. `https://your-project.livekit.cloud`).
+- SIP admin grant is required for trunk/dispatch operations; SIP call grant is required for creating/transferring participants. The service helpers generate appropriate tokens using your configured API key/secret.
+
+### Creating a SIP client
+
+```elixir
+# Using config values (recommended)
+client = Livekitex.sip_service()
+
+# Or explicit
+client = Livekitex.SIPService.create("YOUR_API_KEY", "YOUR_API_SECRET",
+  host: "your-project.livekit.cloud" # Cloud domain (no scheme)
+)
+```
+
+### Inbound trunks
+
+```elixir
+# Create an inbound trunk
+{:ok, trunk} = Livekitex.SIPService.create_inbound_trunk(client, %{
+  "name" => "Inbound A",
+  "numbers" => ["+15551234567"],
+  # Optional allow-lists and options
+  "allowed_addresses" => ["0.0.0.0/0"],
+  "media_encryption" => "SIP_MEDIA_ENCRYPT_ALLOW"
+})
+
+# List inbound trunks
+{:ok, items} = Livekitex.SIPService.list_inbound_trunks(client)
+```
+
+### Outbound trunks
+
+```elixir
+# Create an outbound trunk
+{:ok, trunk} = Livekitex.SIPService.create_outbound_trunk(client, %{
+  "name" => "Outbound A",
+  "address" => "sip.provider.example.com",
+  "destination_country" => "US",
+  "numbers" => ["+15550000001", "+15550000002"]
+})
+
+# List outbound trunks
+{:ok, items} = Livekitex.SIPService.list_outbound_trunks(client)
+```
+
+### Dispatch rules
+
+```elixir
+# Direct a caller into an existing room
+rule = %{
+  "name" => "Direct to room",
+  "rule" => %{"dispatch_rule_direct" => %{"room_name" => "sales-room"}}
+}
+
+{:ok, info} = Livekitex.SIPService.create_dispatch_rule(client, rule)
+
+# List dispatch rules
+{:ok, rules} = Livekitex.SIPService.list_dispatch_rules(client)
+```
+
+### Make an outbound call (SIP Participant)
+
+```elixir
+{:ok, participant} = Livekitex.SIPService.create_participant(client, %{
+  "sip_trunk_id" => "trunk-id",
+  "sip_call_to" => "+15550123456",
+  "room_name" => "sales-room",
+  # Optional headers/attributes/timeouts
+  "headers" => %{"X-Ref" => "case-123"},
+  "wait_until_answered" => true
+})
+```
+
+### Transfer a call
+
+```elixir
+:ok = Livekitex.SIPService.transfer_participant(client, %{
+  "participant_identity" => "callee-identity",
+  "room_name" => "sales-room",
+  "transfer_to" => "+15550987654",
+  "play_dialtone" => true
+})
+```
+
+### Notes and troubleshooting
+- These helpers call Twirp JSON endpoints under `/twirp/livekit.SIP/*`.
+- For Cloud, ensure `LIVEKIT_HOST` is set to your cloud domain, e.g. `your-project.livekit.cloud`. The WebSocket URL (`wss://…`) is for real-time media and not used by these HTTP APIs.
+- Errors are returned as `{:error, {reason, message}}` where `reason` maps Twirp error codes to atoms.
+- For testing, you can set the Tesla adapter to `Tesla.Mock` via `Application.put_env(:livekitex, :tesla_adapter, Tesla.Mock)` and define your `Tesla.Mock.mock/1` responders.
 
 #### Background Job for Room Cleanup
 
