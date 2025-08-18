@@ -47,6 +47,7 @@ defmodule Livekitex do
 
   - `Livekitex.RoomService` - Room and participant management
   - `Livekitex.EgressService` - Egress management
+  - `Livekitex.SIPService` - SIP trunks, dispatch rules, and participants
   - `Livekitex.Webhook` - Webhook validation and processing
   - `Livekitex.AccessToken` - Token generation and validation
   """
@@ -77,6 +78,25 @@ defmodule Livekitex do
   def room_service do
     config = Config.client_config()
     RoomService.create(config.api_key, config.api_secret, host: config.host)
+  end
+
+  @doc """
+  Creates a SIP service client with current configuration.
+
+  For LiveKit Cloud, ensure `config.host` is your cloud domain without scheme
+  (e.g. "test-xxxx.livekit.cloud"). HTTPS is used by default.
+
+  ## Examples
+
+      client = Livekitex.sip_service()
+      # SIPService calls
+  """
+  def sip_service(opts \\ []) do
+    config = Config.client_config()
+
+    base_opts = [host: config.host] ++ opts
+
+    Livekitex.SIPService.create(config.api_key, config.api_secret, base_opts)
   end
 
   @doc """

@@ -61,7 +61,11 @@ defmodule Livekitex.TwirpUtils do
         middleware
       end
 
-    adapter = {Tesla.Adapter.Finch, name: Livekitex.Finch}
+    adapter =
+      Keyword.get(opts, :adapter) ||
+        Application.get_env(:livekitex, :tesla_adapter) ||
+        Application.get_env(:tesla, :adapter) ||
+        {Tesla.Adapter.Finch, name: Livekitex.Finch}
 
     Tesla.client(middleware, adapter)
   end
