@@ -1,0 +1,408 @@
+// Copyright 2023 LiveKit, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+package livekit;
+option go_package = "github.com/livekit/protocol/livekit";
+option csharp_namespace = "LiveKit.Proto";
+option ruby_package = "LiveKit::Proto";
+
+import "livekit_models.proto";
+import "logger/options.proto";
+
+message Job {
+  string id = 1;
+  string dispatch_id = 9 [(logger.name) = "dispatchID"];
+  JobType type = 2;
+  Room room = 3;
+  optional ParticipantInfo participant = 4;
+  string namespace = 5 [deprecated = true];
+  string metadata = 6 [(logger.sensitivity) = SENSITIVITY_PII];
+  string agent_name = 7;
+  JobState state = 8;
+  bool enable_recording = 10;
+  string deployment = 11;
+  map<string, string> attributes = 12 [(logger.sensitivity) = SENSITIVITY_PII];
+  bool enable_redaction = 13;
+  // when the server created the job, in Unix nanoseconds
+  int64 created_at = 14;
+  // The agent thread (an AT_ id, see agent/livekit_agent_thread.proto) the dispatched job's
+  // call reads and writes. Empty means the call keeps no durable thread.
+  string thread_id = 15;
+}
+
+message JobState {
+  JobStatus status = 1;
+  string error = 2;
+  int64 started_at = 3;
+  int64 ended_at = 4;
+  int64 updated_at = 5;
+  string participant_identity = 6;
+  string worker_id = 7 [(logger.name) = "workerID"];
+  string agent_id = 8 [(logger.name) = "agentID"];
+  // why the job has no agent, for JS_PENDING and JS_CANCELLED jobs
+  JobStateReason reason = 9;
+  // when the server received the worker's accept for this attempt, in Unix nanoseconds
+  int64 accepted_at = 10;
+  // when the server sent the assignment for this attempt, in Unix nanoseconds
+  int64 assigned_at = 11;
+  // attempts assigned to a worker so far, the current one included
+  uint32 attempts = 12;
+  // started_at of the first attempt assigned to a worker, in Unix nanoseconds
+  int64 first_started_at = 13;
+  // time spent in attempts the agent's own code failed before the agent
+  // joined, as an entrypoint that fails before it connects: from each such
+  // attempt's start to the next attempt's start, in nanoseconds
+  int64 agent_failed_attempts_ns = 14;
+  // workers asked to take this attempt, the one that took it included
+  uint32 workers_asked = 15;
+}
+
+// from Worker to Server
+message WorkerMessage {
+  oneof message {
+    // agent workers need to register themselves with the server first
+    RegisterWorkerRequest register = 1;
+    // worker confirms to server that it's available for a job, or declines it
+    AvailabilityResponse availability = 2;
+
+    // worker can update its status to the server, including taking itself out of the pool
+    UpdateWorkerStatus update_worker = 3;
+    // job can send status updates to the server, useful for tracking progress
+    UpdateJobStatus update_job = 4;
+
+    WorkerPing ping = 5;
+    SimulateJobRequest simulate_job = 6;
+    MigrateJobRequest migrate_job = 7;
+    // a running job asks the server to sign an access token for it
+    CreateJobTokenRequest create_job_token = 8;
+  };
+}
+
+// from Server to Worker
+message ServerMessage {
+  oneof message {
+    // server confirms the registration, from this moment on, the worker is considered active
+    RegisterWorkerResponse register = 1;
+    // server asks worker to confirm availability for a job
+    AvailabilityRequest availability = 2;
+    JobAssignment assignment = 3;
+    JobTermination termination = 5;
+    WorkerPong pong = 4;
+
+    // the server is draining this control connection: re-register elsewhere,
+    // in-flight agent HTTP streams run to completion
+    AgentHttp.GoAway go_away = 6;
+    CreateJobTokenResponse create_job_token = 7;
+  }
+}
+
+enum JobType {
+  JT_ROOM = 0;
+  JT_PUBLISHER = 1;
+  JT_PARTICIPANT = 2;
+}
+
+enum WorkerStatus {
+  WS_AVAILABLE = 0;
+  WS_FULL = 1;
+}
+
+enum JobStatus {
+  JS_PENDING = 0;
+  JS_RUNNING = 1;
+  JS_SUCCESS = 2;
+  JS_FAILED = 3;
+  // the job ended before it was assigned to an agent
+  JS_CANCELLED = 4;
+}
+
+enum JobStateReason {
+  JSR_UNSPECIFIED = 0;
+  // no agent was available to accept the job
+  JSR_NO_CAPACITY = 1;
+  // the room closed before an agent was assigned
+  JSR_ROOM_CLOSED = 2;
+  // the dispatch was deleted before an agent was assigned
+  JSR_DISPATCH_DELETED = 3;
+  // the job failed and is being dispatched again
+  JSR_RETRYING = 4;
+}
+
+message SimulateJobRequest {
+  JobType type = 1;
+  Room room = 2;
+  ParticipantInfo participant = 3;
+}
+
+message WorkerPing {
+  int64 timestamp = 1;
+}
+
+message WorkerPong {
+  int64 last_timestamp = 1;
+  int64 timestamp = 2;
+}
+
+message RegisterWorkerRequest {
+  reserved 2, 4; // worker_id, name (retired)
+  JobType type = 1;
+  string agent_name = 8;
+  string version = 3;
+  uint32 ping_interval = 5;
+  optional string namespace = 6;
+  ParticipantPermission allowed_permissions = 7;
+  string deployment = 9;
+
+  // HTTP endpoints this worker serves through the data plane, in route order.
+  // Empty means the worker exposes no endpoints and needs no data connections.
+  repeated AgentHttp.AgentEndpoint endpoints = 10;
+  // random per process; a re-registration with a new instance_id supersedes the
+  // previous epoch and closes its remaining connections
+  string instance_id = 11 [(logger.name) = "instanceID"];
+  // highest data-plane protocol version the worker supports; 0 = unsupported
+  uint32 endpoint_protocol = 12;
+}
+
+message RegisterWorkerResponse {
+  reserved 2;
+  string worker_id = 1 [(logger.name) = "workerID"];
+  ServerInfo server_info = 3;
+  // present iff the registration carried endpoints and the server supports the data plane
+  AgentHttp.AgentEndpointSettings endpoint_settings = 4;
+}
+
+message MigrateJobRequest {
+  // string job_id = 1 [deprecated = true];
+  repeated string job_ids = 2;
+  // the jobs in job_ids as they were assigned, with state.participant_identity
+  // set to the identity the worker accepted them with
+  repeated Job jobs = 3;
+}
+
+message AvailabilityRequest {
+  Job job = 1;
+
+  // True when the job was previously assigned to another worker but has been
+  // migrated due to different reasons (e.g. worker failure, job migration)
+  bool resuming = 2;
+}
+
+message AvailabilityResponse {
+  string job_id = 1 [(logger.name) = "jobID"];
+  bool available = 2;
+  bool supports_resume = 3;
+  bool terminate = 8;
+
+  string participant_name = 4;
+  string participant_identity = 5;
+  string participant_metadata = 6;
+  map<string, string> participant_attributes = 7;
+  // NEXT_ID: 9
+}
+
+message UpdateJobStatus {
+  string job_id = 1 [(logger.name) = "jobID"];
+
+  // The worker can indicate the job end by either specifying SUCCESS or FAILED
+  JobStatus status = 2;
+
+  // metadata shown on the dashboard, useful for debugging
+  string error = 3;
+
+  // set once the agent has connected to the room
+  JobJoinTiming join_timing = 4;
+}
+
+// Instants of one agent join on the worker host's monotonic clock, in microseconds. The
+// clock origin is arbitrary, so only differences between these values carry meaning on
+// their own. The worker and its job processes share this clock.
+message JobJoinTiming {
+  int64 offer_received_us = 1;       // availability request received
+  int64 accepted_us = 2;             // request handler accepted the job
+  int64 assignment_received_us = 3;  // job assignment received
+  int64 launched_us = 4;             // a job process was handed the job
+  bool launch_warm = 5;              // an idle process took the job; false means one was spawned
+  int64 entrypoint_started_us = 6;   // the agent's entrypoint started
+  int64 connect_called_us = 7;       // the agent called room connect
+  int64 connected_us = 8;            // the agent's primary transport connected
+}
+
+message UpdateWorkerStatus {
+  reserved 2; // metadata (retired)
+  optional WorkerStatus status = 1;
+  float load = 3;
+  uint32 job_count = 4;
+
+  // worker wants no new streams; existing streams run to completion
+  bool draining = 5;
+  // monotonic per registration; status updates may interleave across connections
+  // and a stale report must not regress newer state
+  uint64 seq = 6;
+}
+
+message JobAssignment {
+  Job job = 1;
+  optional string url = 2;
+  string token = 3 [(logger.sensitivity) = SENSITIVITY_SECRET];
+}
+
+message JobTermination {
+  string job_id = 1 [(logger.name) = "jobID"];
+}
+
+message CreateJobTokenRequest {
+  // echoed in the response
+  string request_id = 1 [(logger.name) = "requestID"];
+  string job_id = 2 [(logger.name) = "jobID"];
+  // The claims of the token the job wants, as JSON, in the same shape as an
+  // access token's payload: identity, name, attributes, video, sip, and so on.
+  string claims = 3;
+}
+
+message CreateJobTokenResponse {
+  string request_id = 1 [(logger.name) = "requestID"];
+  string token = 2 [(logger.sensitivity) = SENSITIVITY_SECRET];
+  // Unix seconds
+  int64 expires_at = 3;
+  // empty on success; otherwise why the token was refused, naming any refused claim
+  string error = 4;
+}
+
+// ----- agent HTTP endpoints data plane -----
+//
+// AgentHttp namespaces the data plane: workers expose HTTP endpoints served at
+// /agents/{agent_name}/{deployment}/{path} without binding any local listener.
+// The worker opens ONE WebTransport (QUIC) session to /agent that carries both
+// its control stream (the same WorkerMessage/ServerMessage exchange as the
+// WebSocket control connection, length-delimited) and every HTTP exchange: the
+// node opens one bidirectional QUIC stream per request. QUIC provides the
+// multiplexing and per-stream flow control, so there is no credit accounting
+// and no attach handshake.
+//
+// Each exchange stream is:
+//
+//   [len:u32be][StreamPreamble]   the only LiveKit framing
+//   [ ... opaque bytes ... ]      one HTTP/1.1 exchange, to FIN or RESET_STREAM
+//
+// After the preamble the stream is byte-transparent: the node writes a
+// canonical HTTP/1.1 request and the worker replies with an HTTP/1.1 response,
+// each parsed by whatever HTTP implementation the side already has. A WebSocket
+// upgrade is therefore an ordinary request whose response is a 101, after which
+// the stream is a byte pipe. The protocol evolves by version negotiation at
+// registration, so the preamble carries no version of its own.
+//
+// Bodies use ordinary HTTP/1.1 framing, Content-Length or chunked, and are
+// unbounded: a body may be many gigabytes and must be streamed. Request and
+// response size limits are policy for the layer above.
+//
+// How one direction ends:
+//
+//   success             end of message per the body's own framing, then FIN.
+//   failed mid-body     chunked trailer fields x-lk-completion and x-lk-error,
+//                       in band, so the outcome cannot race the bytes it
+//                       describes.
+//   failed before any   RESET_STREAM carrying an HttpStreamResetCode, sound
+//   bytes               only here, where nothing is in flight.
+//
+// FIN before the body's own framing says it is complete is truncation, and a
+// receiver must surface it as such.
+//
+// The x-lk- header prefix is reserved for this signalling in both directions.
+// A node strips it from client-supplied request headers, so a client cannot
+// forge one, and strips it from responses, so it never reaches the end client.
+message AgentHttp {
+  enum AgentEndpointKind {
+    AEK_HTTP = 0;
+    // reserved for future text-mode endpoints
+    AEK_TEXT = 1;
+  }
+
+  message AgentEndpoint {
+    // starlette-style path template rooted at '/': {name} (one segment, default),
+    // {name:int}, {name:float}, {name:uuid} (constrained single segments),
+    // {name:path} (multi-segment). Custom converters are rejected.
+    string path = 1;
+    // uppercase, exactly as the application routes them (FastAPI does not imply
+    // HEAD from GET)
+    repeated string methods = 2;
+    AgentEndpointKind kind = 3;
+    // reachable without a project token
+    bool public = 4;
+  }
+
+  // registration-level settings negotiated on the control connection, returned
+  // in RegisterWorkerResponse when the worker declares endpoints and the server
+  // supports the data plane.
+  message AgentEndpointSettings {
+    reserved 2, 3; // attach_token, data_connection_count (retired with the wire pool)
+    // the negotiated data-plane protocol version; the worker speaks exactly this
+    // or closes the session
+    uint32 protocol = 1;
+  }
+
+  // the first thing on every exchange stream, node -> worker. It carries only
+  // what the worker cannot derive from the HTTP bytes that follow and what it
+  // must not infer from client-supplied headers - identity above all.
+  message StreamPreamble {
+    // what the bytes after this preamble are. A field rather than a framing
+    // tag, so a new stream semantic costs no new mechanism.
+    AgentEndpointKind kind = 1;
+    string request_id = 2 [(logger.name) = "requestID"];
+    // the caller holds agent-endpoint call permission for this agent and
+    // deployment. Always true on a non-public route.
+    bool authorized = 3;
+    // the manifest template that matched, e.g. "/items/{id}"
+    string route = 4;
+    // relative, because node and worker clocks are not synchronized. 0 imposes
+    // no deadline.
+    uint32 timeout_ms = 5;
+    // end client address, host only
+    string client_addr = 6 [(logger.sensitivity) = SENSITIVITY_PII];
+    // "http" or "https" as the end client saw it; not derivable worker-side
+    string scheme = 7;
+    // NEXT_ID: 8
+  }
+
+  // why a stream was reset before any HTTP bytes flowed. This travels as the
+  // QUIC RESET_STREAM / STOP_SENDING error code, so it is a number with no room
+  // for detail: the reason string is logged by the side that reset and joined
+  // to this by request_id. An outcome after bytes have flowed travels in
+  // trailers instead, where it cannot race them.
+  enum HttpStreamResetCode {
+    // no information. The ordinary cancel code, sent whenever a stream is torn
+    // down without a specific outcome, so it must stay the zero value and must
+    // not imply that anything was or was not applied.
+    HSR_ABORT = 0;
+    // the worker aborted before any application code observed the request, so
+    // nothing was applied and the exchange is safe to retry. Requires that the
+    // application was never entered; a 404 it returned is an ordinary response.
+    HSR_REFUSED = 1;
+    // the application was entered and then failed before producing a response
+    // head; side effects may already have happened, so this is not safe to
+    // retry.
+    HSR_INTERNAL = 2;
+    // the deadline elapsed before a response head was produced
+    HSR_TIMEOUT = 3;
+    // the peer's bytes were not valid HTTP/1.1
+    HSR_PROTOCOL = 4;
+  }
+
+  // the server is draining: the worker should re-register elsewhere; in-flight
+  // HTTP exchanges run to completion
+  message GoAway {
+    string reason = 1;
+  }
+}
