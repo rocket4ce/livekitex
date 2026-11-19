@@ -1,37 +1,67 @@
-# This workflow uses actions that are not certified by GitHub.
-# They are provided by a third-party and are governed by
-# separate terms of service, privacy policy, and support
-# documentation.
-
 name: Elixir CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build and test
-    runs-on: ubuntu-22.04
+  test:
+    name: Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: "1.16"
+            otp: "26"
+          - elixir: "1.17"
+            otp: "27"
+          - elixir: "1.18"
+            otp: "27"
+          - elixir: "1.19"
+            otp: "28"
+            lint: true
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Elixir
-        uses: erlef/setup-beam@61e01a43a562a89bfc54c7f9a378ff67b03e4a21 # v1.16.0
+      - uses: erlef/setup-beam@v1
         with:
-          elixir-version: '1.18.1' # Elixir version to match local
-          otp-version: '27.1'      # Erlang/OTP version (erts-15.1)
-      - name: Restore dependencies cache
-        uses: actions/cache@v3
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+      - uses: actions/cache@v4
         with:
-          path: deps
-          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
-          restore-keys: ${{ runner.os }}-mix-
-      - name: Install dependencies
-        run: mix deps.get
-      - name: Run tests
-        run: mix test
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-mix-${{ hashFiles('mix.lock') }}
+      - run: mix deps.get
+      - run: mix format --check-formatted
+        if: ${{ matrix.lint }}
+      - run: mix compile --warnings-as-errors
+      - run: mix credo --strict
+        if: ${{ matrix.lint }}
+      - run: mix test
+      - run: mix docs
+        if: ${{ matrix.lint }}
+      - run: mix hex.build
+        if: ${{ matrix.lint }}
+
+  integration:
+    name: Integration (livekit-server --dev)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19"
+          otp-version: "28"
+      - name: Start LiveKit
+        run: |
+          docker run -d --name livekit -p 7880:7880 livekit/livekit-server --dev --bind 0.0.0.0
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:7880 && break; sleep 1; done
+      - run: mix deps.get
+      - run: mix test --only integration
