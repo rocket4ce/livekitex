@@ -1,210 +1,178 @@
 defmodule Livekitex.TokenVerifier do
   @moduledoc """
-  Provides functionality to verify and validate LiveKit access tokens.
+  Verifies LiveKit access tokens: HS256 signature, issuer (the API key) and the
+  `exp` / `nbf` time window.
+
+      verifier = Livekitex.TokenVerifier.new("api-key", "api-secret")
+      {:ok, %Livekitex.Grants.ClaimGrant{identity: "alice"}} =
+        Livekitex.TokenVerifier.verify(verifier, jwt)
+
+  Errors are atoms: `:invalid_token`, `:invalid_signature`, `:invalid_issuer`,
+  `:missing_expiration`, `:token_expired`, `:token_not_yet_valid`.
   """
 
   alias Joken.Signer
   alias Livekitex.Grants.ClaimGrant
 
-  defstruct api_key: nil,
-            api_secret: nil
+  @derive {Inspect, except: [:api_secret]}
+  defstruct api_key: nil, api_secret: nil, leeway: 60
 
-  @type t :: %__MODULE__{
-          api_key: String.t(),
-          api_secret: String.t()
-        }
+  @type t :: %__MODULE__{api_key: String.t(), api_secret: String.t(), leeway: non_neg_integer()}
+
+  @groups [:video, :sip, :agent, :inference, :observability]
+
+  @type error ::
+          :invalid_token
+          | :invalid_signature
+          | :invalid_issuer
+          | :missing_expiration
+          | :token_expired
+          | :token_not_yet_valid
 
   @doc """
-  Creates a new TokenVerifier.
-
-  ## Parameters
-
-    - `api_key`: The API key for your LiveKit project.
-    - `api_secret`: The API secret for your LiveKit project.
-
-  ## Examples
+  Creates a verifier. `:leeway` (seconds, default 60) tolerates clock skew.
 
       iex> Livekitex.TokenVerifier.new("api_key", "api_secret")
-      %Livekitex.TokenVerifier{api_key: "api_key", api_secret: "api_secret"}
+      %Livekitex.TokenVerifier{api_key: "api_key", api_secret: "api_secret", leeway: 60}
   """
-  def new(api_key, api_secret) do
-    %__MODULE__{
-      api_key: api_key,
-      api_secret: api_secret
-    }
+  def new(api_key, api_secret, opts \\ []) do
+    %__MODULE__{api_key: api_key, api_secret: api_secret, leeway: Keyword.get(opts, :leeway, 60)}
   end
 
-  @doc """
-  Verifies a JWT token and returns the claims.
-
-  ## Parameters
-
-    - `verifier`: A TokenVerifier struct.
-    - `token`: The JWT token string to verify.
-
-  ## Returns
-
-    - `{:ok, claim_grant}` on successful verification.
-    - `{:error, reason}` on verification failure.
-
-  ## Examples
-
-      iex> verifier = Livekitex.TokenVerifier.new("devkey", "secret")
-      iex> {:ok, claims} = Livekitex.TokenVerifier.verify(verifier, valid_token)
-      iex> claims.identity
-      "user"
-  """
+  @doc "Verifies a token and returns its claims as a `ClaimGrant`."
+  @spec verify(t(), String.t()) :: {:ok, ClaimGrant.t()} | {:error, error()}
   def verify(%__MODULE__{} = verifier, token) when is_binary(token) do
-    signer = Signer.create("HS256", verifier.api_secret)
-
-    case Joken.verify(token, signer) do
-      {:ok, claims} ->
-        case validate_issuer(claims, verifier.api_key) do
-          :ok ->
-            claim_grant = ClaimGrant.from_claims(claims)
-            {:ok, claim_grant}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-
-      {:error, reason} ->
-        {:error, reason}
+    with {:ok, claims} <- verify_raw(verifier, token) do
+      parse_claims(claims)
     end
   end
 
+  def verify(%__MODULE__{}, _token), do: {:error, :invalid_token}
+
   @doc """
-  Verifies a JWT token and returns the claims, raising on error.
-
-  ## Parameters
-
-    - `verifier`: A TokenVerifier struct.
-    - `token`: The JWT token string to verify.
-
-  ## Returns
-
-    - `claim_grant` on successful verification.
-    - Raises an exception on verification failure.
-
-  ## Examples
-
-      iex> verifier = Livekitex.TokenVerifier.new("devkey", "secret")
-      iex> claims = Livekitex.TokenVerifier.verify!(verifier, valid_token)
-      iex> claims.identity
-      "user"
+  Verifies a token and returns the raw claim map (string keys).
   """
+  @spec verify_raw(t(), String.t()) :: {:ok, map()} | {:error, error()}
+  def verify_raw(%__MODULE__{} = verifier, token) when is_binary(token) do
+    signer = Signer.create("HS256", verifier.api_secret)
+
+    with {:ok, claims} <- verify_signature(token, signer),
+         :ok <- check_issuer(claims, verifier.api_key),
+         :ok <- check_time(claims, System.os_time(:second), verifier.leeway) do
+      {:ok, claims}
+    end
+  end
+
+  @doc "Like `verify/2` but raises `ArgumentError` on failure."
   def verify!(%__MODULE__{} = verifier, token) do
     case verify(verifier, token) do
       {:ok, claims} -> claims
-      {:error, reason} -> raise "Token verification failed: #{inspect(reason)}"
+      {:error, reason} -> raise ArgumentError, "token verification failed: #{inspect(reason)}"
     end
   end
 
   @doc """
-  Validates token claims without signature verification.
-  Useful for inspecting token contents.
-
-  ## Parameters
-
-    - `token`: The JWT token string to decode.
-
-  ## Returns
-
-    - `{:ok, claim_grant}` on successful decoding.
-    - `{:error, reason}` on decoding failure.
-
-  ## Examples
-
-      iex> {:ok, claims} = Livekitex.TokenVerifier.decode_claims(token)
-      iex> claims.identity
-      "user"
+  Decodes the claims **without** verifying the signature. Only use this to inspect
+  tokens you already trust.
   """
+  @spec decode_claims(String.t()) :: {:ok, ClaimGrant.t()} | {:error, :invalid_token}
   def decode_claims(token) when is_binary(token) do
-    try do
-      case Joken.peek_claims(token) do
-        {:ok, claims} ->
-          claim_grant = ClaimGrant.from_claims(claims)
-          {:ok, claim_grant}
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    rescue
-      error ->
-        {:error, error}
+    case Joken.peek_claims(token) do
+      {:ok, claims} -> parse_claims(claims)
+      {:error, _} -> {:error, :invalid_token}
     end
+  rescue
+    _ -> {:error, :invalid_token}
   end
 
   @doc """
-  Validates specific permissions in a token.
+  Verifies a token and checks that it carries the required grants.
 
-  ## Parameters
+      verify_permissions(verifier, jwt, video: [room_join: true, room: "r"], sip: [call: true])
 
-    - `verifier`: A TokenVerifier struct.
-    - `token`: The JWT token string to verify.
-    - `permissions`: A keyword list of required permissions.
+  A flat keyword list is treated as video permissions:
 
-  ## Returns
+      verify_permissions(verifier, jwt, room_join: true)
 
-    - `{:ok, claim_grant}` if token is valid and has required permissions.
-    - `{:error, reason}` if verification fails or permissions are insufficient.
-
-  ## Examples
-
-      iex> verifier = Livekitex.TokenVerifier.new("devkey", "secret")
-      iex> {:ok, claims} = Livekitex.TokenVerifier.verify_permissions(verifier, token, room_join: true)
+  Omitted video permissions use LiveKit's defaults (`can_publish` and
+  `can_subscribe` default to `true`, `can_publish_data` follows `can_publish`,
+  everything else is `false`). List values such as `can_publish_sources` are compared
+  as sets.
   """
-  def verify_permissions(%__MODULE__{} = verifier, token, required_permissions) do
-    case verify(verifier, token) do
-      {:ok, claim_grant} ->
-        case validate_permissions(claim_grant, required_permissions) do
-          :ok -> {:ok, claim_grant}
-          {:error, reason} -> {:error, reason}
-        end
+  @spec verify_permissions(t(), String.t(), keyword()) ::
+          {:ok, ClaimGrant.t()} | {:error, error() | {:missing_permissions, keyword()}}
+  def verify_permissions(%__MODULE__{} = verifier, token, required) do
+    required =
+      if Enum.all?(required, fn {key, _} -> key in @groups end),
+        do: required,
+        else: [video: required]
 
-      {:error, reason} ->
-        {:error, reason}
+    with {:ok, grant} <- verify(verifier, token) do
+      missing =
+        for {group, perms} <- required,
+            {perm, expected} <- perms,
+            effective(group, Map.get(grant, group), perm) != normalize(expected),
+            do: {group, {perm, expected}}
+
+      if missing == [], do: {:ok, grant}, else: {:error, {:missing_permissions, missing}}
     end
   end
 
-  # Private functions
+  # LiveKit defaults for omitted video permissions.
+  defp effective(:video, nil, perm), do: effective(:video, %Livekitex.Grants.VideoGrant{}, perm)
 
-  defp validate_issuer(claims, expected_api_key) do
-    case Map.get(claims, "iss") do
-      ^expected_api_key ->
-        :ok
-
-      actual_issuer ->
-        {:error, "Invalid issuer. Expected: #{expected_api_key}, got: #{actual_issuer}"}
+  defp effective(:video, grant, perm) do
+    case {perm, Map.get(grant, perm)} do
+      {:can_publish, nil} -> true
+      {:can_subscribe, nil} -> true
+      {:can_publish_data, nil} -> effective(:video, grant, :can_publish)
+      {_perm, value} -> normalize(value)
     end
   end
 
-  defp validate_permissions(claim_grant, required_permissions) do
-    video_grant = claim_grant.video
+  defp effective(_group, nil, _perm), do: false
+  defp effective(_group, grant, perm), do: grant |> Map.get(perm) |> normalize()
 
-    if video_grant do
-      validate_video_permissions(video_grant, required_permissions)
+  defp normalize(nil), do: false
+
+  defp normalize(sources) when is_list(sources),
+    do: sources |> Enum.map(&(&1 |> to_string() |> String.downcase())) |> Enum.sort()
+
+  defp normalize(value), do: value
+
+  defp parse_claims(claims) do
+    {:ok, ClaimGrant.from_claims(claims)}
+  rescue
+    _ -> {:error, :invalid_token}
+  end
+
+  defp verify_signature(token, signer) do
+    if length(String.split(token, ".")) == 3 do
+      do_verify_signature(token, signer)
     else
-      {:error, "No video grant found in token"}
+      {:error, :invalid_token}
     end
   end
 
-  defp validate_video_permissions(video_grant, required_permissions) do
-    missing_permissions =
-      Enum.filter(required_permissions, fn {permission, required_value} ->
-        actual_value = Map.get(video_grant, permission)
-        not permission_satisfied?(actual_value, required_value)
-      end)
-
-    case missing_permissions do
-      [] -> :ok
-      missing -> {:error, "Missing required permissions: #{inspect(missing)}"}
+  defp do_verify_signature(token, signer) do
+    case Joken.verify(token, signer) do
+      {:ok, claims} -> {:ok, claims}
+      {:error, :signature_error} -> {:error, :invalid_signature}
+      {:error, _} -> {:error, :invalid_token}
     end
+  rescue
+    _ -> {:error, :invalid_token}
   end
 
-  defp permission_satisfied?(nil, true), do: false
-  defp permission_satisfied?(false, true), do: false
-  defp permission_satisfied?(true, true), do: true
-  defp permission_satisfied?(actual, required) when actual == required, do: true
-  defp permission_satisfied?(_actual, _required), do: false
+  defp check_issuer(%{"iss" => iss}, api_key) when is_binary(iss) and iss == api_key, do: :ok
+  defp check_issuer(_claims, _api_key), do: {:error, :invalid_issuer}
+
+  defp check_time(claims, now, leeway) do
+    cond do
+      not is_integer(claims["exp"]) -> {:error, :missing_expiration}
+      now > claims["exp"] + leeway -> {:error, :token_expired}
+      is_integer(claims["nbf"]) and now + leeway < claims["nbf"] -> {:error, :token_not_yet_valid}
+      true -> :ok
+    end
+  end
 end

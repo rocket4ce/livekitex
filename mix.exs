@@ -1,53 +1,88 @@
 defmodule Livekitex.MixProject do
   use Mix.Project
 
+  @version "0.2.0"
+  @source_url "https://github.com/rocket4ce/livekitex"
+
   def project do
     [
       app: :livekitex,
-      version: "0.1.34",
-      elixir: "~> 1.18",
+      version: @version,
+      elixir: "~> 1.16",
+      elixirc_paths: elixirc_paths(Mix.env()),
+      start_permanent: Mix.env() == :prod,
       deps: deps(),
       description: description(),
-      package: package()
+      package: package(),
+      docs: docs(),
+      source_url: @source_url,
+      dialyzer: [plt_add_apps: [:mix]]
     ]
   end
 
   def application do
-    [
-      extra_applications: [:logger],
-      mod: {Livekitex.Application, []}
-    ]
+    [extra_applications: [:logger, :crypto]]
   end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 
   defp description do
     """
-    An Elixir client for LiveKit, providing tools for interacting with LiveKit servers,
-    including access token generation, room management, and webhook verification.
+    Elixir server SDK for LiveKit: access tokens, webhooks, and the full Twirp
+    server API (rooms, egress, ingress, SIP, agent dispatch, connectors, phone numbers).
     """
   end
 
   defp package do
     [
-      files: ~w(lib .formatter.exs mix.exs README.md),
+      files: ~w(lib priv/protos .formatter.exs mix.exs README.md CHANGELOG.md LICENSE),
       licenses: ["Apache-2.0"],
-      links: %{"GitHub" => "https://github.com/rocket4ce/livekitex"},
+      links: %{"GitHub" => @source_url, "Changelog" => "#{@source_url}/blob/main/CHANGELOG.md"},
       maintainers: ["Rocket4ce"]
     ]
   end
 
-  # Run "mix help deps" to learn about dependencies.
+  defp docs do
+    [
+      main: "readme",
+      source_ref: "v#{@version}",
+      extras: ["README.md", "CHANGELOG.md"],
+      groups_for_modules: [
+        Client: [Livekitex, Livekitex.Client, Livekitex.Config, Livekitex.Error],
+        Services: [
+          Livekitex.RoomService,
+          Livekitex.EgressService,
+          Livekitex.IngressService,
+          Livekitex.SIPService,
+          Livekitex.AgentDispatchService,
+          Livekitex.ConnectorService,
+          Livekitex.PhoneNumberService
+        ],
+        Auth: [
+          Livekitex.AccessToken,
+          Livekitex.TokenVerifier,
+          ~r/^Livekitex\.Grants/
+        ],
+        Plugs: [~r/^Livekitex\.Webhook/, ~r/^Livekitex\.TokenSource/],
+        Internals: [Livekitex.Twirp],
+        "Protocol (generated)": [~r/^Livekitex\.Proto\./]
+      ],
+      nest_modules_by_prefix: [Livekitex.Proto.Livekit]
+    ]
+  end
+
   defp deps do
     [
-      {:protobuf, "~> 0.14.1", runtime: false},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:protobuf, "~> 0.17"},
+      {:req, "~> 0.7"},
       {:joken, "~> 2.6"},
       {:jason, "~> 1.4"},
-      {:tesla, "~> 1.4"},
-      {:finch, "~> 0.16"},
       {:plug, "~> 1.14"},
       {:telemetry, "~> 1.2"},
-      {:ex_doc, "~> 0.32", only: :dev, runtime: false},
-      {:mox, "~> 1.0", only: :test}
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 end

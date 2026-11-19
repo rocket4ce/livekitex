@@ -1,245 +1,505 @@
 defmodule Livekitex.SIPService do
   @moduledoc """
-  High-level SIP wrapper over LiveKit's SIP Twirp API.
+  SIP telephony (`livekit.SIP`): trunks, dispatch rules, outbound calls and transfers.
 
-  Provides helpers to manage trunks, dispatch rules, and participants using
-  JSON Twirp endpoints over HTTP(S) with Tesla/Finch, and token grants.
+  Trunk and dispatch-rule management uses a token with `sip.admin`; dialing uses
+  `sip.call` (transfers also need `roomAdmin` for the room).
+
+  ## Outbound call
+
+      {:ok, trunk} =
+        Livekitex.SIPService.create_outbound_trunk(client,
+          name: "Twilio",
+          address: "my-trunk.pstn.twilio.com",
+          numbers: ["+15105550100"],
+          auth_username: "user",
+          auth_password: "pass"
+        )
+
+      {:ok, participant} =
+        Livekitex.SIPService.create_sip_participant(client, trunk.sip_trunk_id,
+          "+15105550123", "support-call",
+          participant_identity: "caller",
+          wait_until_answered: true,
+          ringing_timeout: 30
+        )
+
+  On dialing failures, `Livekitex.Error.sip_status/1` returns the SIP status, e.g.
+  `{486, "Busy Here"}`.
+
+  ## Inbound calls
+
+      {:ok, trunk} = Livekitex.SIPService.create_inbound_trunk(client, name: "Inbound", numbers: ["+15105550100"])
+
+      {:ok, rule} =
+        Livekitex.SIPService.create_dispatch_rule(client,
+          [dispatch_rule_individual: [room_prefix: "call-"]],
+          trunk_ids: [trunk.sip_trunk_id],
+          room_config: [agents: [[agent_name: "phone-agent"]]]
+        )
+
+  `google.protobuf.Duration` fields (`ringing_timeout`, `max_call_duration`) accept an
+  integer number of seconds.
   """
 
-  alias Livekitex.AccessToken
-  alias Livekitex.Grants
-  alias Livekitex.TwirpUtils
-  alias Livekitex.SIPServiceClient, as: Client
+  import Livekitex.Service
 
-  defstruct api_key: nil,
-            api_secret: nil,
-            base_url: nil,
-            client: nil
+  alias Livekitex.Client
 
-  @type t :: %__MODULE__{
-          api_key: String.t(),
-          api_secret: String.t(),
-          base_url: String.t(),
-          client: Tesla.Client.t() | nil
-        }
+  alias Livekitex.Proto.Livekit.{
+    CreateSIPDispatchRuleRequest,
+    CreateSIPInboundTrunkRequest,
+    CreateSIPOutboundTrunkRequest,
+    CreateSIPParticipantRequest,
+    DeleteSIPDispatchRuleRequest,
+    DeleteSIPTrunkRequest,
+    GetSIPInboundTrunkRequest,
+    GetSIPInboundTrunkResponse,
+    GetSIPOutboundTrunkRequest,
+    GetSIPOutboundTrunkResponse,
+    ListSIPDispatchRuleRequest,
+    ListSIPDispatchRuleResponse,
+    ListSIPInboundTrunkRequest,
+    ListSIPInboundTrunkResponse,
+    ListSIPOutboundTrunkRequest,
+    ListSIPOutboundTrunkResponse,
+    SIPDispatchRuleInfo,
+    SIPInboundTrunkInfo,
+    SIPOutboundTrunkInfo,
+    SIPParticipantInfo,
+    SIPTrunkInfo,
+    TransferSIPParticipantRequest,
+    TransferSIPParticipantResponse,
+    UpdateSIPDispatchRuleRequest,
+    UpdateSIPInboundTrunkRequest,
+    UpdateSIPOutboundTrunkRequest
+  }
+
+  @service "SIP"
+  @admin [sip: [admin: true]]
+  @default_ringing_timeout 30
+
+  @type result(t) :: {:ok, t} | {:error, Livekitex.Error.t()}
+
+  ## Inbound trunks
 
   @doc """
-  Create a new SIPService configured for a LiveKit server.
-
-  Options:
-    - :host - e.g. "test-abc.livekit.cloud"
-    - :port - integer port; default 443 for https
-    - :scheme - "https" or "http"; default "https"
-    - :base_url - override full base URL, e.g. "https://host:443"
+  Creates an inbound trunk. `trunk` is a `SIPInboundTrunkInfo` or its fields as a
+  keyword list (`:name`, `:numbers`, `:allowed_addresses`, `:allowed_numbers`,
+  `:auth_username`, `:auth_password`, `:krisp_enabled`, ...).
   """
-  def create(api_key, api_secret, opts \\ []) do
-    base_url =
-      Keyword.get_lazy(opts, :base_url, fn ->
-        host = Keyword.get(opts, :host, "localhost")
-        port = Keyword.get(opts, :port)
-        scheme = Keyword.get(opts, :scheme, default_scheme(port))
+  @spec create_inbound_trunk(Client.t(), SIPInboundTrunkInfo.t() | keyword(), keyword()) ::
+          result(SIPInboundTrunkInfo.t())
+  def create_inbound_trunk(client, trunk, opts \\ []) do
+    call_opts = call_opts!(opts)
 
-        case port do
-          nil -> "#{scheme}://#{host}"
-          _ -> "#{scheme}://#{host}:#{port}"
-        end
-      end)
-
-    %__MODULE__{api_key: api_key, api_secret: api_secret, base_url: base_url}
+    rpc(
+      client,
+      @service,
+      "CreateSIPInboundTrunk",
+      CreateSIPInboundTrunkRequest,
+      [trunk: trunk],
+      SIPInboundTrunkInfo,
+      @admin,
+      no_retry(call_opts)
+    )
   end
 
-  defp default_scheme(443), do: "https"
-  defp default_scheme(nil), do: "https"
-  defp default_scheme(_), do: "http"
+  @doc """
+  Partially updates an inbound trunk. `changes` are `SIPInboundTrunkUpdate` fields;
+  list fields use `ListUpdate` (`[set: [...]]`, `[add: [...]]`, `[remove: [...]]`).
 
-  # --- token helpers ---
-  defp admin_token(%__MODULE__{api_key: key, api_secret: secret}) do
-    sip_grant = %Grants.SipGrant{admin: true}
-    grants = %Grants.ClaimGrant{sip: sip_grant}
+      update_inbound_trunk(client, "ST_...", name: "Main line", numbers: [add: ["+15105550101"]])
+  """
+  @spec update_inbound_trunk(Client.t(), String.t(), keyword(), keyword()) ::
+          result(SIPInboundTrunkInfo.t())
+  def update_inbound_trunk(client, trunk_id, changes, opts \\ []) do
+    call_opts = call_opts!(opts)
+    fields = [sip_trunk_id: trunk_id, update: changes]
 
-    key
-    |> AccessToken.create(secret, [])
-    |> Map.put(:grants, grants)
-    |> AccessToken.to_jwt()
-    |> case do
-      {:ok, jwt, _} -> {:ok, jwt}
-      error -> error
-    end
+    rpc(
+      client,
+      @service,
+      "UpdateSIPInboundTrunk",
+      UpdateSIPInboundTrunkRequest,
+      fields,
+      SIPInboundTrunkInfo,
+      @admin,
+      call_opts
+    )
   end
 
-  defp call_token(%__MODULE__{api_key: key, api_secret: secret}) do
-    sip_grant = %Grants.SipGrant{call: true}
-    grants = %Grants.ClaimGrant{sip: sip_grant}
+  @doc "Replaces an inbound trunk with a new definition."
+  @spec replace_inbound_trunk(
+          Client.t(),
+          String.t(),
+          SIPInboundTrunkInfo.t() | keyword(),
+          keyword()
+        ) ::
+          result(SIPInboundTrunkInfo.t())
+  def replace_inbound_trunk(client, trunk_id, trunk, opts \\ []) do
+    call_opts = call_opts!(opts)
+    fields = [sip_trunk_id: trunk_id, replace: trunk]
 
-    key
-    |> AccessToken.create(secret, [])
-    |> Map.put(:grants, grants)
-    |> AccessToken.to_jwt()
-    |> case do
-      {:ok, jwt, _} -> {:ok, jwt}
-      error -> error
-    end
+    rpc(
+      client,
+      @service,
+      "UpdateSIPInboundTrunk",
+      UpdateSIPInboundTrunkRequest,
+      fields,
+      SIPInboundTrunkInfo,
+      @admin,
+      call_opts
+    )
   end
 
-  # --- client helper ---
-  defp ensure_client(%__MODULE__{client: nil} = svc) do
-    # Allow adapter override for tests via application env
-    adapter = Application.get_env(:livekitex, :tesla_adapter)
-    {:ok, TwirpUtils.create_client(svc.base_url, nil, adapter: adapter)}
+  @doc "Gets an inbound trunk by id."
+  @spec get_inbound_trunk(Client.t(), String.t(), keyword()) :: result(SIPInboundTrunkInfo.t())
+  def get_inbound_trunk(client, trunk_id, opts \\ []) do
+    call_opts = call_opts!(opts)
+
+    client
+    |> rpc(
+      @service,
+      "GetSIPInboundTrunk",
+      GetSIPInboundTrunkRequest,
+      [sip_trunk_id: trunk_id],
+      GetSIPInboundTrunkResponse,
+      @admin,
+      call_opts
+    )
+    |> map_ok(& &1.trunk)
   end
 
-  defp ensure_client(%__MODULE__{client: client}), do: {:ok, client}
+  @doc "Lists inbound trunks, optionally filtered by `:trunk_ids` or `:numbers`."
+  @spec list_inbound_trunks(Client.t(), keyword()) :: result([SIPInboundTrunkInfo.t()])
+  def list_inbound_trunks(client, opts \\ []) do
+    {call_opts, fields} = split_opts(opts)
 
-  # --- trunks ---
-  def create_inbound_trunk(%__MODULE__{} = svc, trunk \\ %{}) do
-    with {:ok, client} <- ensure_client(svc),
-         {:ok, token} <- admin_token(svc),
-         {:ok, trunk_info} <- Client.create_inbound_trunk(client, token, trunk) do
-      {:ok, trunk_info}
-    else
-      error -> TwirpUtils.handle_twirp_response(error)
-    end
+    client
+    |> rpc(
+      @service,
+      "ListSIPInboundTrunk",
+      ListSIPInboundTrunkRequest,
+      fields,
+      ListSIPInboundTrunkResponse,
+      @admin,
+      call_opts
+    )
+    |> map_ok(& &1.items)
   end
 
-  def update_inbound_trunk(%__MODULE__{} = svc, trunk_id, action) do
-    with {:ok, client} <- ensure_client(svc),
-         {:ok, token} <- admin_token(svc),
-         {:ok, trunk_info} <- Client.update_inbound_trunk(client, token, trunk_id, action) do
-      {:ok, trunk_info}
-    else
-      error -> TwirpUtils.handle_twirp_response(error)
-    end
+  ## Outbound trunks
+
+  @doc """
+  Creates an outbound trunk. `trunk` is a `SIPOutboundTrunkInfo` or its fields
+  (`:name`, `:address`, `:transport`, `:numbers`, `:auth_username`, `:auth_password`, ...).
+  """
+  @spec create_outbound_trunk(Client.t(), SIPOutboundTrunkInfo.t() | keyword(), keyword()) ::
+          result(SIPOutboundTrunkInfo.t())
+  def create_outbound_trunk(client, trunk, opts \\ []) do
+    call_opts = call_opts!(opts)
+
+    rpc(
+      client,
+      @service,
+      "CreateSIPOutboundTrunk",
+      CreateSIPOutboundTrunkRequest,
+      [trunk: trunk],
+      SIPOutboundTrunkInfo,
+      @admin,
+      no_retry(call_opts)
+    )
   end
 
-  def get_inbound_trunk(%__MODULE__{} = svc, trunk_id) do
-    with {:ok, client} <- ensure_client(svc),
-         {:ok, token} <- admin_token(svc),
-         {:ok, %{"trunk" => trunk_info}} <- Client.get_inbound_trunk(client, token, trunk_id) do
-      {:ok, trunk_info}
-    else
-      error -> TwirpUtils.handle_twirp_response(error)
-    end
+  @doc "Partially updates an outbound trunk with `SIPOutboundTrunkUpdate` fields."
+  @spec update_outbound_trunk(Client.t(), String.t(), keyword(), keyword()) ::
+          result(SIPOutboundTrunkInfo.t())
+  def update_outbound_trunk(client, trunk_id, changes, opts \\ []) do
+    call_opts = call_opts!(opts)
+    fields = [sip_trunk_id: trunk_id, update: changes]
+
+    rpc(
+      client,
+      @service,
+      "UpdateSIPOutboundTrunk",
+      UpdateSIPOutboundTrunkRequest,
+      fields,
+      SIPOutboundTrunkInfo,
+      @admin,
+      call_opts
+    )
   end
 
-  def list_inbound_trunks(%__MODULE__{} = svc, opts \\ %{}) do
-    with {:ok, client} <- ensure_client(svc),
-         {:ok, token} <- admin_token(svc),
-         {:ok, %{"items" => items}} <- Client.list_inbound_trunks(client, token, opts) do
-      {:ok, items}
-    else
-      error -> TwirpUtils.handle_twirp_response(error)
-    end
+  @doc "Replaces an outbound trunk with a new definition."
+  @spec replace_outbound_trunk(
+          Client.t(),
+          String.t(),
+          SIPOutboundTrunkInfo.t() | keyword(),
+          keyword()
+        ) ::
+          result(SIPOutboundTrunkInfo.t())
+  def replace_outbound_trunk(client, trunk_id, trunk, opts \\ []) do
+    call_opts = call_opts!(opts)
+    fields = [sip_trunk_id: trunk_id, replace: trunk]
+
+    rpc(
+      client,
+      @service,
+      "UpdateSIPOutboundTrunk",
+      UpdateSIPOutboundTrunkRequest,
+      fields,
+      SIPOutboundTrunkInfo,
+      @admin,
+      call_opts
+    )
   end
 
-  def create_outbound_trunk(%__MODULE__{} = svc, trunk \\ %{}) do
-    with {:ok, client} <- ensure_client(svc),
-         {:ok, token} <- admin_token(svc),
-         {:ok, trunk_info} <- Client.create_outbound_trunk(client, token, trunk) do
-      {:ok, trunk_info}
-    else
-      error -> TwirpUtils.handle_twirp_response(error)
-    end
+  @doc "Gets an outbound trunk by id."
+  @spec get_outbound_trunk(Client.t(), String.t(), keyword()) :: result(SIPOutboundTrunkInfo.t())
+  def get_outbound_trunk(client, trunk_id, opts \\ []) do
+    call_opts = call_opts!(opts)
+
+    client
+    |> rpc(
+      @service,
+      "GetSIPOutboundTrunk",
+      GetSIPOutboundTrunkRequest,
+      [sip_trunk_id: trunk_id],
+      GetSIPOutboundTrunkResponse,
+      @admin,
+      call_opts
+    )
+    |> map_ok(& &1.trunk)
   end
 
-  def update_outbound_trunk(%__MODULE__{} = svc, trunk_id, action) do
-    with {:ok, client} <- ensure_client(svc),
-         {:ok, token} <- admin_token(svc),
-         {:ok, trunk_info} <- Client.update_outbound_trunk(client, token, trunk_id, action) do
-      {:ok, trunk_info}
-    else
-      error -> TwirpUtils.handle_twirp_response(error)
-    end
+  @doc "Lists outbound trunks, optionally filtered by `:trunk_ids` or `:numbers`."
+  @spec list_outbound_trunks(Client.t(), keyword()) :: result([SIPOutboundTrunkInfo.t()])
+  def list_outbound_trunks(client, opts \\ []) do
+    {call_opts, fields} = split_opts(opts)
+
+    client
+    |> rpc(
+      @service,
+      "ListSIPOutboundTrunk",
+      ListSIPOutboundTrunkRequest,
+      fields,
+      ListSIPOutboundTrunkResponse,
+      @admin,
+      call_opts
+    )
+    |> map_ok(& &1.items)
   end
 
-  def get_outbound_trunk(%__MODULE__{} = svc, trunk_id) do
-    with {:ok, client} <- ensure_client(svc),
-         {:ok, token} <- admin_token(svc),
-         {:ok, %{"trunk" => trunk_info}} <- Client.get_outbound_trunk(client, token, trunk_id) do
-      {:ok, trunk_info}
-    else
-      error -> TwirpUtils.handle_twirp_response(error)
-    end
+  @doc "Deletes an inbound or outbound trunk."
+  @spec delete_trunk(Client.t(), String.t(), keyword()) :: result(SIPTrunkInfo.t())
+  def delete_trunk(client, trunk_id, opts \\ []) do
+    call_opts = call_opts!(opts)
+
+    rpc(
+      client,
+      @service,
+      "DeleteSIPTrunk",
+      DeleteSIPTrunkRequest,
+      [sip_trunk_id: trunk_id],
+      SIPTrunkInfo,
+      @admin,
+      call_opts
+    )
   end
 
-  def list_outbound_trunks(%__MODULE__{} = svc, opts \\ %{}) do
-    with {:ok, client} <- ensure_client(svc),
-         {:ok, token} <- admin_token(svc),
-         {:ok, %{"items" => items}} <- Client.list_outbound_trunks(client, token, opts) do
-      {:ok, items}
-    else
-      error -> TwirpUtils.handle_twirp_response(error)
-    end
+  ## Dispatch rules
+
+  @doc """
+  Creates a dispatch rule.
+
+  `rule` is a `SIPDispatchRule` (or its fields), e.g.
+  `[dispatch_rule_individual: [room_prefix: "call-"]]`,
+  `[dispatch_rule_direct: [room_name: "lobby"]]` or
+  `[dispatch_rule_callee: [room_prefix: "number-"]]`.
+
+  `opts` accepts the other `SIPDispatchRuleInfo` fields: `:name`, `:trunk_ids`,
+  `:inbound_numbers`, `:hide_phone_number`, `:metadata`, `:attributes`,
+  `:room_preset`, `:room_config`, `:krisp_enabled`, ...
+  """
+  @spec create_dispatch_rule(Client.t(), struct() | keyword(), keyword()) ::
+          result(SIPDispatchRuleInfo.t())
+  def create_dispatch_rule(client, rule, opts \\ []) do
+    {call_opts, fields} = split_opts(opts)
+    request = [dispatch_rule: Keyword.put(fields, :rule, rule)]
+
+    rpc(
+      client,
+      @service,
+      "CreateSIPDispatchRule",
+      CreateSIPDispatchRuleRequest,
+      request,
+      SIPDispatchRuleInfo,
+      @admin,
+      no_retry(call_opts)
+    )
   end
 
-  def delete_trunk(%__MODULE__{} = svc, trunk_id) do
-    with {:ok, client} <- ensure_client(svc),
-         {:ok, token} <- admin_token(svc),
-         {:ok, trunk_info} <- Client.delete_trunk(client, token, trunk_id) do
-      {:ok, trunk_info}
-    else
-      error -> TwirpUtils.handle_twirp_response(error)
-    end
+  @doc "Partially updates a dispatch rule with `SIPDispatchRuleUpdate` fields."
+  @spec update_dispatch_rule(Client.t(), String.t(), keyword(), keyword()) ::
+          result(SIPDispatchRuleInfo.t())
+  def update_dispatch_rule(client, rule_id, changes, opts \\ []) do
+    call_opts = call_opts!(opts)
+    fields = [sip_dispatch_rule_id: rule_id, update: changes]
+
+    rpc(
+      client,
+      @service,
+      "UpdateSIPDispatchRule",
+      UpdateSIPDispatchRuleRequest,
+      fields,
+      SIPDispatchRuleInfo,
+      @admin,
+      call_opts
+    )
   end
 
-  # --- dispatch rules ---
-  def create_dispatch_rule(%__MODULE__{} = svc, rule \\ %{}) do
-    with {:ok, client} <- ensure_client(svc),
-         {:ok, token} <- admin_token(svc),
-         {:ok, info} <- Client.create_dispatch_rule(client, token, rule) do
-      {:ok, info}
-    else
-      error -> TwirpUtils.handle_twirp_response(error)
-    end
+  @doc "Replaces a dispatch rule with a new `SIPDispatchRuleInfo`."
+  @spec replace_dispatch_rule(
+          Client.t(),
+          String.t(),
+          SIPDispatchRuleInfo.t() | keyword(),
+          keyword()
+        ) ::
+          result(SIPDispatchRuleInfo.t())
+  def replace_dispatch_rule(client, rule_id, info, opts \\ []) do
+    call_opts = call_opts!(opts)
+    fields = [sip_dispatch_rule_id: rule_id, replace: info]
+
+    rpc(
+      client,
+      @service,
+      "UpdateSIPDispatchRule",
+      UpdateSIPDispatchRuleRequest,
+      fields,
+      SIPDispatchRuleInfo,
+      @admin,
+      call_opts
+    )
   end
 
-  def update_dispatch_rule(%__MODULE__{} = svc, rule_id, action) do
-    with {:ok, client} <- ensure_client(svc),
-         {:ok, token} <- admin_token(svc),
-         {:ok, info} <- Client.update_dispatch_rule(client, token, rule_id, action) do
-      {:ok, info}
-    else
-      error -> TwirpUtils.handle_twirp_response(error)
-    end
+  @doc "Lists dispatch rules, optionally filtered by `:dispatch_rule_ids` or `:trunk_ids`."
+  @spec list_dispatch_rules(Client.t(), keyword()) :: result([SIPDispatchRuleInfo.t()])
+  def list_dispatch_rules(client, opts \\ []) do
+    {call_opts, fields} = split_opts(opts)
+
+    client
+    |> rpc(
+      @service,
+      "ListSIPDispatchRule",
+      ListSIPDispatchRuleRequest,
+      fields,
+      ListSIPDispatchRuleResponse,
+      @admin,
+      call_opts
+    )
+    |> map_ok(& &1.items)
   end
 
-  def list_dispatch_rules(%__MODULE__{} = svc, opts \\ %{}) do
-    with {:ok, client} <- ensure_client(svc),
-         {:ok, token} <- admin_token(svc),
-         {:ok, %{"items" => items}} <- Client.list_dispatch_rules(client, token, opts) do
-      {:ok, items}
-    else
-      error -> TwirpUtils.handle_twirp_response(error)
-    end
+  @doc """
+  Gets a dispatch rule by id (LiveKit has no Get RPC; this filters `ListSIPDispatchRule`).
+  Returns `{:ok, nil}` when not found.
+  """
+  @spec get_dispatch_rule(Client.t(), String.t(), keyword()) ::
+          result(SIPDispatchRuleInfo.t() | nil)
+  def get_dispatch_rule(client, rule_id, opts \\ []) do
+    client
+    |> list_dispatch_rules(Keyword.put(opts, :dispatch_rule_ids, [rule_id]))
+    |> map_ok(&List.first/1)
   end
 
-  def delete_dispatch_rule(%__MODULE__{} = svc, rule_id) do
-    with {:ok, client} <- ensure_client(svc),
-         {:ok, token} <- admin_token(svc),
-         {:ok, info} <- Client.delete_dispatch_rule(client, token, rule_id) do
-      {:ok, info}
-    else
-      error -> TwirpUtils.handle_twirp_response(error)
-    end
+  @doc "Deletes a dispatch rule."
+  @spec delete_dispatch_rule(Client.t(), String.t(), keyword()) :: result(SIPDispatchRuleInfo.t())
+  def delete_dispatch_rule(client, rule_id, opts \\ []) do
+    call_opts = call_opts!(opts)
+
+    rpc(
+      client,
+      @service,
+      "DeleteSIPDispatchRule",
+      DeleteSIPDispatchRuleRequest,
+      [sip_dispatch_rule_id: rule_id],
+      SIPDispatchRuleInfo,
+      @admin,
+      call_opts
+    )
   end
 
-  # --- participants ---
-  def create_participant(%__MODULE__{} = svc, req) do
-    with {:ok, client} <- ensure_client(svc),
-         {:ok, token} <- call_token(svc),
-         {:ok, info} <- Client.create_participant(client, token, req) do
-      {:ok, info}
-    else
-      error -> TwirpUtils.handle_twirp_response(error)
-    end
+  ## Calls
+
+  @doc """
+  Dials a phone number through an outbound trunk and joins the callee to `room`.
+
+  ## Options
+
+  Any `CreateSIPParticipantRequest` field, notably `:participant_identity`,
+  `:participant_name`, `:participant_metadata`, `:participant_attributes`, `:dtmf`,
+  `:wait_until_answered`, `:ringing_timeout` (seconds), `:max_call_duration`
+  (seconds), `:krisp_enabled`, `:hide_phone_number`, `:headers`, `:display_name`,
+  `:sip_number`.
+
+  With `wait_until_answered: true` the HTTP timeout is extended to cover the ringing
+  time. Never retried automatically.
+  """
+  @spec create_sip_participant(Client.t(), String.t(), String.t(), String.t(), keyword()) ::
+          result(SIPParticipantInfo.t())
+  def create_sip_participant(client, trunk_id, number, room, opts \\ []) do
+    {call_opts, fields} = split_opts(opts)
+    fields = Keyword.merge(fields, sip_trunk_id: trunk_id, sip_call_to: number, room_name: room)
+    call_opts = call_opts |> no_retry() |> dial_timeout(fields, @default_ringing_timeout)
+
+    rpc(
+      client,
+      @service,
+      "CreateSIPParticipant",
+      CreateSIPParticipantRequest,
+      fields,
+      SIPParticipantInfo,
+      [sip: [call: true]],
+      call_opts
+    )
   end
 
-  def transfer_participant(%__MODULE__{} = svc, req) do
-    with {:ok, client} <- ensure_client(svc),
-         {:ok, token} <- call_token(svc),
-         {:ok, _} <- Client.transfer_participant(client, token, req) do
-      :ok
-    else
-      error -> TwirpUtils.handle_twirp_response(error)
-    end
+  @doc """
+  Transfers a SIP participant to another number or SIP URI (`tel:+1...` or `sip:...`).
+
+  `opts` accepts `:dialtone`, `:headers` and `:ringing_timeout` (seconds). Never retried
+  automatically.
+  """
+  @spec transfer_sip_participant(Client.t(), String.t(), String.t(), String.t(), keyword()) ::
+          :ok | {:error, Livekitex.Error.t()}
+  def transfer_sip_participant(client, room, identity, transfer_to, opts \\ []) do
+    {call_opts, fields} = split_opts(opts)
+
+    fields =
+      Keyword.merge(fields,
+        room_name: room,
+        participant_identity: identity,
+        transfer_to: transfer_to
+      )
+
+    call_opts =
+      call_opts
+      |> no_retry()
+      |> dial_timeout(Keyword.put(fields, :wait_until_answered, true), @default_ringing_timeout)
+
+    grants = [sip: [call: true], video: [room_admin: true, room: room]]
+
+    client
+    |> rpc(
+      @service,
+      "TransferSIPParticipant",
+      TransferSIPParticipantRequest,
+      fields,
+      TransferSIPParticipantResponse,
+      grants,
+      call_opts
+    )
+    |> to_ok()
   end
 end

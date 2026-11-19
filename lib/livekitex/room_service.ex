@@ -1,302 +1,433 @@
 defmodule Livekitex.RoomService do
-  @behaviour Livekitex.RoomServiceBehaviour
   @moduledoc """
-  Provides functionality to interact with the LiveKit RoomService API using Twirp.
+  Room and participant management (`livekit.RoomService`).
+
+  Every function takes a `Livekitex.Client` as first argument and returns
+  `{:ok, result}` (or `:ok`) on success and `{:error, %Livekitex.Error{}}` on failure.
+  Results are the generated protobuf structs under `Livekitex.Proto.Livekit`.
+
+      client = Livekitex.client()
+      {:ok, room} = Livekitex.RoomService.create_room(client, "standup", empty_timeout: 300)
+      {:ok, participants} = Livekitex.RoomService.list_participants(client, "standup")
+
+  The trailing `opts` of every function also accepts the call options `:timeout`,
+  `:retry` and `:request_id` (see `Livekitex.Twirp`).
   """
 
-  alias Livekitex.AccessToken
-  alias Livekitex.Grants
-  alias Livekitex.TwirpUtils
-  alias Livekitex.RoomServiceClient
+  import Livekitex.Service
 
-  require Logger
+  alias Livekitex.Client
 
-  defstruct api_key: nil,
-            api_secret: nil,
-            host: "localhost",
-            port: 7880,
-            client: nil
+  alias Livekitex.Proto.Livekit.{
+    CreateRoomRequest,
+    DeleteRoomRequest,
+    DeleteRoomResponse,
+    ForwardParticipantRequest,
+    ForwardParticipantResponse,
+    ListParticipantsRequest,
+    ListParticipantsResponse,
+    ListRoomsRequest,
+    ListRoomsResponse,
+    MoveParticipantRequest,
+    MoveParticipantResponse,
+    MuteRoomTrackRequest,
+    MuteRoomTrackResponse,
+    ParticipantInfo,
+    PerformRpcRequest,
+    PerformRpcResponse,
+    RemoveParticipantResponse,
+    Room,
+    RoomParticipantIdentity,
+    SendDataRequest,
+    SendDataResponse,
+    TrackInfo,
+    UpdateParticipantRequest,
+    UpdateRoomMetadataRequest,
+    UpdateSubscriptionsRequest,
+    UpdateSubscriptionsResponse
+  }
 
-  @type t :: %__MODULE__{
-          api_key: String.t(),
-          api_secret: String.t(),
-          host: String.t(),
-          port: integer(),
-          client: Tesla.Client.t() | nil
-        }
+  @service "RoomService"
+
+  @type result(t) :: {:ok, t} | {:error, Livekitex.Error.t()}
 
   @doc """
-  Creates a new RoomService client.
-
-  ## Parameters
-
-    - `api_key`: The API key for your LiveKit project.
-    - `api_secret`: The API secret for your LiveKit project.
-    - `options`: A keyword list of options.
-      - `host`: The host of the LiveKit server. Defaults to "localhost".
-      - `port`: The port of the LiveKit server. Defaults to 7880.
-
-  ## Examples
-
-      iex> Livekitex.RoomService.create("api_key", "api_secret")
-      %Livekitex.RoomService{
-        api_key: "api_key",
-        api_secret: "api_secret",
-        host: "localhost",
-        port: 7880
-      }
+  Builds a client. Kept for compatibility with 0.1.x; prefer `Livekitex.Client.new/1`.
   """
-  def create(api_key, api_secret, options \\ []) do
-    %__MODULE__{
-      api_key: api_key,
-      api_secret: api_secret,
-      host: Keyword.get(options, :host, "localhost"),
-      port: Keyword.get(options, :port, 7880)
-    }
+  @deprecated "Use Livekitex.Client.new/1 instead"
+  @spec create(String.t(), String.t(), String.t()) :: Client.t()
+  def create(url, api_key, api_secret),
+    do: Client.new(url: url, api_key: api_key, api_secret: api_secret)
+
+  @doc """
+  Creates a room, or returns the existing one with the same name.
+
+  `opts` accepts any `CreateRoomRequest` field: `:empty_timeout`, `:departure_timeout`,
+  `:max_participants`, `:metadata`, `:room_preset`, `:tags`, `:egress`, `:agents`,
+  `:min_playout_delay`, `:max_playout_delay`, `:sync_streams`, `:replay_enabled`, ...
+
+      create_room(client, "support", agents: [[agent_name: "support-agent"]])
+  """
+  @spec create_room(Client.t(), String.t() | CreateRoomRequest.t(), keyword()) :: result(Room.t())
+  def create_room(client, name_or_request, opts \\ [])
+
+  def create_room(client, %CreateRoomRequest{} = request, opts) do
+    call_opts = call_opts!(opts)
+
+    rpc(
+      client,
+      @service,
+      "CreateRoom",
+      CreateRoomRequest,
+      request,
+      Room,
+      [video: [room_create: true]],
+      call_opts
+    )
+  end
+
+  def create_room(client, name, opts) when is_binary(name) do
+    {call_opts, fields} = split_opts(opts)
+    request = Keyword.put(fields, :name, name)
+
+    rpc(
+      client,
+      @service,
+      "CreateRoom",
+      CreateRoomRequest,
+      request,
+      Room,
+      [video: [room_create: true]],
+      call_opts
+    )
   end
 
   @doc """
-  Creates a new room.
-
-  ## Parameters
-
-    - `room_service`: The RoomService client.
-    - `name`: The name of the room.
-    - `options`: A keyword list of options.
-      - `empty_timeout`: Room timeout when empty (seconds)
-      - `departure_timeout`: Timeout after participant departure (seconds)
-      - `max_participants`: Maximum number of participants
-      - `metadata`: Room metadata
-      - `min_playout_delay`: Minimum playout delay (ms)
-      - `max_playout_delay`: Maximum playout delay (ms)
-      - `sync_streams`: Whether to sync streams
-
-  ## Examples
-
-      iex> room_service = Livekitex.RoomService.create("devkey", "secret")
-      iex> Livekitex.RoomService.create_room(room_service, "test-room")
-      {:ok, %Livekitex.Room{}}
+  Lists active rooms. Pass `names: [...]` to only return those rooms.
   """
-  def create_room(%__MODULE__{} = room_service, name, options \\ []) do
-    with {:ok, client} <- ensure_client(room_service),
-         {:ok, token} <- create_room_token(room_service),
-         request <- build_create_room_request(name, options) do
-      case RoomServiceClient.create_room(client, request, token) do
-        {:ok, proto_room} ->
-          {:ok, TwirpUtils.proto_to_room(proto_room)}
+  @spec list_rooms(Client.t(), keyword()) :: result([Room.t()])
+  def list_rooms(client, opts \\ []) do
+    {call_opts, fields} = split_opts(opts)
 
-        error ->
-          TwirpUtils.handle_twirp_response(error)
-      end
-    end
+    client
+    |> rpc(
+      @service,
+      "ListRooms",
+      ListRoomsRequest,
+      fields,
+      ListRoomsResponse,
+      [video: [room_list: true]],
+      call_opts
+    )
+    |> map_ok(& &1.rooms)
   end
 
-  @doc """
-  Deletes a room.
+  @doc "Deletes a room, disconnecting all participants."
+  @spec delete_room(Client.t(), String.t(), keyword()) :: :ok | {:error, Livekitex.Error.t()}
+  def delete_room(client, room, opts \\ []) do
+    call_opts = call_opts!(opts)
 
-  ## Parameters
-
-    - `room_service`: The RoomService client.
-    - `room_name`: The name of the room to delete.
-
-  ## Examples
-
-      iex> room_service = Livekitex.RoomService.create("devkey", "secret")
-      iex> Livekitex.RoomService.delete_room(room_service, "test-room")
-      :ok
-  """
-  def delete_room(%__MODULE__{} = room_service, room_name) do
-    with {:ok, client} <- ensure_client(room_service),
-         {:ok, token} <- create_room_token(room_service),
-         request <- %Livekit.DeleteRoomRequest{room: room_name} do
-      case RoomServiceClient.delete_room(client, request, token) do
-        {:ok, _response} -> :ok
-        error -> TwirpUtils.handle_twirp_response(error)
-      end
-    end
+    client
+    |> rpc(
+      @service,
+      "DeleteRoom",
+      DeleteRoomRequest,
+      [room: room],
+      DeleteRoomResponse,
+      [video: [room_create: true]],
+      call_opts
+    )
+    |> to_ok()
   end
 
-  @doc """
-  Lists all rooms.
+  @doc "Updates the room metadata. Returns the updated room."
+  @spec update_room_metadata(Client.t(), String.t(), String.t(), keyword()) :: result(Room.t())
+  def update_room_metadata(client, room, metadata, opts \\ []) do
+    call_opts = call_opts!(opts)
+    fields = [room: room, metadata: metadata]
 
-  ## Parameters
-
-    - `room_service`: The RoomService client.
-    - `options`: A keyword list of options.
-      - `names`: List of specific room names to filter by
-
-  ## Examples
-
-      iex> room_service = Livekitex.RoomService.create("devkey", "secret")
-      iex> Livekitex.RoomService.list_rooms(room_service)
-      {:ok, []}
-  """
-  def list_rooms(%__MODULE__{} = room_service, options \\ []) do
-    with {:ok, client} <- ensure_client(room_service),
-         {:ok, token} <- create_room_list_token(room_service),
-         request <- %Livekit.ListRoomsRequest{names: Keyword.get(options, :names, [])} do
-      case RoomServiceClient.list_rooms(client, request, token) do
-        {:ok, %Livekit.ListRoomsResponse{rooms: rooms}} ->
-          {:ok, Enum.map(rooms, &TwirpUtils.proto_to_room/1)}
-
-        error ->
-          TwirpUtils.handle_twirp_response(error)
-      end
-    end
+    rpc(
+      client,
+      @service,
+      "UpdateRoomMetadata",
+      UpdateRoomMetadataRequest,
+      fields,
+      Room,
+      admin(room),
+      call_opts
+    )
   end
 
-  @doc """
-  Lists participants in a room.
+  @doc "Lists the participants of a room."
+  @spec list_participants(Client.t(), String.t(), keyword()) :: result([ParticipantInfo.t()])
+  def list_participants(client, room, opts \\ []) do
+    call_opts = call_opts!(opts)
 
-  ## Parameters
+    client
+    |> rpc(
+      @service,
+      "ListParticipants",
+      ListParticipantsRequest,
+      [room: room],
+      ListParticipantsResponse,
+      admin(room),
+      call_opts
+    )
+    |> map_ok(& &1.participants)
+  end
 
-    - `room_service`: The RoomService client.
-    - `room_name`: The name of the room.
+  @doc "Gets a participant by identity."
+  @spec get_participant(Client.t(), String.t(), String.t(), keyword()) ::
+          result(ParticipantInfo.t())
+  def get_participant(client, room, identity, opts \\ []) do
+    call_opts = call_opts!(opts)
+    fields = [room: room, identity: identity]
 
-  ## Examples
-
-      iex> room_service = Livekitex.RoomService.create("devkey", "secret")
-      iex> Livekitex.RoomService.list_participants(room_service, "test-room")
-      {:ok, []}
-  """
-  def list_participants(%__MODULE__{} = room_service, room_name) do
-    with {:ok, client} <- ensure_client(room_service),
-         {:ok, token} <- create_room_admin_token(room_service, room_name),
-         request <- %Livekit.ListParticipantsRequest{room: room_name} do
-      case RoomServiceClient.list_participants(client, request, token) do
-        {:ok, %Livekit.ListParticipantsResponse{participants: participants}} ->
-          {:ok, Enum.map(participants, &TwirpUtils.proto_to_participant/1)}
-
-        error ->
-          TwirpUtils.handle_twirp_response(error)
-      end
-    end
+    rpc(
+      client,
+      @service,
+      "GetParticipant",
+      RoomParticipantIdentity,
+      fields,
+      ParticipantInfo,
+      admin(room),
+      call_opts
+    )
   end
 
   @doc """
   Removes a participant from a room.
 
-  ## Parameters
-
-    - `room_service`: The RoomService client.
-    - `room_name`: The name of the room.
-    - `identity`: The identity of the participant to remove.
-
-  ## Examples
-
-      iex> room_service = Livekitex.RoomService.create("devkey", "secret")
-      iex> Livekitex.RoomService.remove_participant(room_service, "test-room", "user123")
-      :ok
+  Pass `revoke_token_ts: unix_seconds` to also revoke tokens issued before that time,
+  so the participant cannot rejoin with an old token.
   """
-  def remove_participant(%__MODULE__{} = room_service, room_name, identity) do
-    with {:ok, client} <- ensure_client(room_service),
-         {:ok, token} <- create_room_admin_token(room_service, room_name),
-         request <- %Livekit.RoomParticipantIdentity{room: room_name, identity: identity} do
-      case RoomServiceClient.remove_participant(client, request, token) do
-        {:ok, _response} -> :ok
-        error -> TwirpUtils.handle_twirp_response(error)
-      end
-    end
+  @spec remove_participant(Client.t(), String.t(), String.t(), keyword()) ::
+          :ok | {:error, Livekitex.Error.t()}
+  def remove_participant(client, room, identity, opts \\ []) do
+    {call_opts, fields} = split_opts(opts)
+    fields = Keyword.merge(fields, room: room, identity: identity)
+
+    client
+    |> rpc(
+      @service,
+      "RemoveParticipant",
+      RoomParticipantIdentity,
+      fields,
+      RemoveParticipantResponse,
+      admin(room),
+      call_opts
+    )
+    |> to_ok()
+  end
+
+  @doc "Mutes or unmutes a published track. Returns the updated track."
+  @spec mute_published_track(Client.t(), String.t(), String.t(), String.t(), boolean(), keyword()) ::
+          result(TrackInfo.t())
+  def mute_published_track(client, room, identity, track_sid, muted, opts \\ []) do
+    call_opts = call_opts!(opts)
+    fields = [room: room, identity: identity, track_sid: track_sid, muted: muted]
+
+    client
+    |> rpc(
+      @service,
+      "MutePublishedTrack",
+      MuteRoomTrackRequest,
+      fields,
+      MuteRoomTrackResponse,
+      admin(room),
+      call_opts
+    )
+    |> map_ok(& &1.track)
   end
 
   @doc """
-  Mutes or unmutes a published track.
+  Updates a participant's metadata, name, attributes or permissions.
 
-  ## Parameters
-
-    - `room_service`: The RoomService client.
-    - `room_name`: The name of the room.
-    - `identity`: The identity of the participant.
-    - `track_sid`: The SID of the track to mute/unmute.
-    - `muted`: Whether to mute (true) or unmute (false) the track.
-
-  ## Examples
-
-      iex> room_service = Livekitex.RoomService.create("devkey", "secret")
-      iex> Livekitex.RoomService.mute_published_track(room_service, "test-room", "user123", "track_sid", true)
-      {:ok, %{}}
+      update_participant(client, "room", "alice",
+        attributes: %{"role" => "host"},
+        permission: [can_publish: true, can_subscribe: true, can_publish_data: true]
+      )
   """
-  def mute_published_track(%__MODULE__{} = room_service, room_name, identity, track_sid, muted) do
-    with {:ok, client} <- ensure_client(room_service),
-         {:ok, token} <- create_room_admin_token(room_service, room_name),
-         request <- %Livekit.MuteRoomTrackRequest{
-           room: room_name,
-           identity: identity,
-           track_sid: track_sid,
-           muted: muted
-         } do
-      case RoomServiceClient.mute_published_track(client, request, token) do
-        {:ok, %Livekit.MuteRoomTrackResponse{track: track}} ->
-          {:ok, TwirpUtils.proto_to_track(track)}
+  @spec update_participant(Client.t(), String.t(), String.t(), keyword()) ::
+          result(ParticipantInfo.t())
+  def update_participant(client, room, identity, opts) do
+    {call_opts, fields} = split_opts(opts)
+    fields = Keyword.merge(fields, room: room, identity: identity)
 
-        error ->
-          TwirpUtils.handle_twirp_response(error)
+    rpc(
+      client,
+      @service,
+      "UpdateParticipant",
+      UpdateParticipantRequest,
+      fields,
+      ParticipantInfo,
+      admin(room),
+      call_opts
+    )
+  end
+
+  @doc """
+  Subscribes or unsubscribes a participant to tracks.
+
+  Use `participant_tracks: [[participant_sid: "PA_...", track_sids: [...]]]` in `opts`
+  to target tracks by publisher.
+  """
+  @spec update_subscriptions(
+          Client.t(),
+          String.t(),
+          String.t(),
+          [String.t()],
+          boolean(),
+          keyword()
+        ) ::
+          :ok | {:error, Livekitex.Error.t()}
+  def update_subscriptions(client, room, identity, track_sids, subscribe, opts \\ []) do
+    {call_opts, fields} = split_opts(opts)
+
+    fields =
+      Keyword.merge(fields,
+        room: room,
+        identity: identity,
+        track_sids: track_sids,
+        subscribe: subscribe
+      )
+
+    client
+    |> rpc(
+      @service,
+      "UpdateSubscriptions",
+      UpdateSubscriptionsRequest,
+      fields,
+      UpdateSubscriptionsResponse,
+      admin(room),
+      call_opts
+    )
+    |> to_ok()
+  end
+
+  @doc """
+  Sends a data packet to participants in a room.
+
+  ## Options
+
+    * `:kind` - `:RELIABLE` (default) or `:LOSSY`
+    * `:destination_identities` - list of identities (all participants when empty)
+    * `:topic` - topic string
+
+  A random nonce is added so LiveKit can deduplicate the packet. Not retried by default.
+  """
+  @spec send_data(Client.t(), String.t(), binary(), keyword()) ::
+          :ok | {:error, Livekitex.Error.t()}
+  def send_data(client, room, data, opts \\ []) do
+    {call_opts, fields} = split_opts(opts)
+
+    fields =
+      fields
+      |> Keyword.put_new(:kind, :RELIABLE)
+      |> Keyword.put_new_lazy(:nonce, fn -> :crypto.strong_rand_bytes(16) end)
+      |> Keyword.merge(room: room, data: data)
+
+    client
+    |> rpc(
+      @service,
+      "SendData",
+      SendDataRequest,
+      fields,
+      SendDataResponse,
+      admin(room),
+      no_retry(call_opts)
+    )
+    |> to_ok()
+  end
+
+  @doc """
+  Forwards a participant to another room: the participant stays in `room` and also
+  appears in `destination_room`. Not retried by default.
+  """
+  @spec forward_participant(Client.t(), String.t(), String.t(), String.t(), keyword()) ::
+          :ok | {:error, Livekitex.Error.t()}
+  def forward_participant(client, room, identity, destination_room, opts \\ []) do
+    call_opts = call_opts!(opts)
+    fields = [room: room, identity: identity, destination_room: destination_room]
+
+    client
+    |> rpc(
+      @service,
+      "ForwardParticipant",
+      ForwardParticipantRequest,
+      fields,
+      ForwardParticipantResponse,
+      admin(room, destination_room),
+      no_retry(call_opts)
+    )
+    |> to_ok()
+  end
+
+  @doc "Moves a participant from `room` to `destination_room`. Not retried by default."
+  @spec move_participant(Client.t(), String.t(), String.t(), String.t(), keyword()) ::
+          :ok | {:error, Livekitex.Error.t()}
+  def move_participant(client, room, identity, destination_room, opts \\ []) do
+    call_opts = call_opts!(opts)
+    fields = [room: room, identity: identity, destination_room: destination_room]
+
+    client
+    |> rpc(
+      @service,
+      "MoveParticipant",
+      MoveParticipantRequest,
+      fields,
+      MoveParticipantResponse,
+      admin(room, destination_room),
+      no_retry(call_opts)
+    )
+    |> to_ok()
+  end
+
+  @doc """
+  Performs an RPC call on a participant (for example an agent) and returns its
+  response payload.
+
+  ## Options
+
+    * `:response_timeout_ms` - how long LiveKit waits for the participant's response.
+      The HTTP timeout is extended accordingly unless `:timeout` is given.
+
+  Not retried by default.
+  """
+  @spec perform_rpc(Client.t(), String.t(), String.t(), String.t(), String.t(), keyword()) ::
+          result(String.t())
+  def perform_rpc(client, room, destination_identity, method, payload, opts \\ []) do
+    {call_opts, fields} = split_opts(opts)
+
+    call_opts =
+      case fields[:response_timeout_ms] do
+        ms when is_integer(ms) and ms > 0 -> Keyword.put_new(call_opts, :timeout, ms + 5_000)
+        _ -> call_opts
       end
-    end
+
+    fields =
+      Keyword.merge(fields,
+        room: room,
+        destination_identity: destination_identity,
+        method: method,
+        payload: payload
+      )
+
+    client
+    |> rpc(
+      @service,
+      "PerformRpc",
+      PerformRpcRequest,
+      fields,
+      PerformRpcResponse,
+      admin(room),
+      no_retry(call_opts)
+    )
+    |> map_ok(& &1.payload)
   end
 
-  # Private helper functions
+  defp admin(room), do: [video: [room_admin: true, room: room]]
 
-  defp ensure_client(%__MODULE__{client: nil} = room_service) do
-    base_url = "http://#{room_service.host}:#{room_service.port}"
-    client = TwirpUtils.create_client(base_url)
-    {:ok, client}
-  end
-
-  defp ensure_client(%__MODULE__{client: client}), do: {:ok, client}
-
-  defp create_room_token(%__MODULE__{api_key: api_key, api_secret: api_secret}) do
-    video_grant = %Grants.VideoGrant{room_create: true}
-    grants = %Grants.ClaimGrant{video: video_grant}
-
-    api_key
-    |> AccessToken.create(api_secret, grants: grants)
-    |> AccessToken.set_video_grant(video_grant)
-    |> AccessToken.to_jwt()
-    |> case do
-      {:ok, jwt, _claims} -> {:ok, jwt}
-      error -> error
-    end
-  end
-
-  defp create_room_list_token(%__MODULE__{api_key: api_key, api_secret: api_secret}) do
-    video_grant = %Grants.VideoGrant{room_list: true}
-    grants = %Grants.ClaimGrant{video: video_grant}
-
-    api_key
-    |> AccessToken.create(api_secret, grants: grants)
-    |> AccessToken.set_video_grant(video_grant)
-    |> AccessToken.to_jwt()
-    |> case do
-      {:ok, jwt, _claims} -> {:ok, jwt}
-      error -> error
-    end
-  end
-
-  defp create_room_admin_token(%__MODULE__{api_key: api_key, api_secret: api_secret}, room_name) do
-    video_grant = %Grants.VideoGrant{room_admin: true, room: room_name}
-    grants = %Grants.ClaimGrant{video: video_grant}
-
-    api_key
-    |> AccessToken.create(api_secret, grants: grants)
-    |> AccessToken.set_video_grant(video_grant)
-    |> AccessToken.to_jwt()
-    |> case do
-      {:ok, jwt, _claims} -> {:ok, jwt}
-      error -> error
-    end
-  end
-
-  defp build_create_room_request(name, options) do
-    %Livekit.CreateRoomRequest{
-      name: name,
-      empty_timeout: Keyword.get(options, :empty_timeout),
-      departure_timeout: Keyword.get(options, :departure_timeout),
-      max_participants: Keyword.get(options, :max_participants),
-      metadata: Keyword.get(options, :metadata),
-      min_playout_delay: Keyword.get(options, :min_playout_delay),
-      max_playout_delay: Keyword.get(options, :max_playout_delay),
-      sync_streams: Keyword.get(options, :sync_streams)
-    }
-  end
+  defp admin(room, destination_room),
+    do: [video: [room_admin: true, room: room, destination_room: destination_room]]
 end

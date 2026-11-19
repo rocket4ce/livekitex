@@ -1,273 +1,160 @@
 defmodule Livekitex.Webhook do
   @moduledoc """
-  Webhook validation and processing for LiveKit events.
+  Verifies and decodes LiveKit webhooks.
 
-  This module provides functionality to validate and process webhooks sent by LiveKit server.
-  It includes signature validation using HMAC-SHA256 and event parsing.
+  LiveKit sends each event as a `POST` with `Content-Type: application/webhook+json`
+  and an `Authorization` header holding a JWT signed with your API secret. The token's
+  `sha256` claim is the base64 SHA-256 of the raw request body. This module checks the
+  signature, the issuer (your API key), the expiry, and the body hash, then decodes the
+  body into a `Livekitex.Proto.Livekit.WebhookEvent`.
+
+      {:ok, event} = Livekitex.Webhook.receive_event(raw_body, auth_header)
+      event.event #=> "participant_joined"
+
+  > #### Use the raw body {: .info}
+  >
+  > The hash is computed over the exact bytes LiveKit sent. If `Plug.Parsers` runs
+  > first (it parses `application/webhook+json` as JSON), use
+  > `Livekitex.Webhook.BodyReader` or `Livekitex.Webhook.Plug`.
+
+  ## Events
+
+  `room_started`, `room_finished`, `participant_joined`, `participant_left`,
+  `participant_connection_aborted`, `track_published`, `track_unpublished`,
+  `egress_started`, `egress_updated`, `egress_ended`, `ingress_started`,
+  `ingress_ended`, `agent_job_pending`, `agent_job_started`, `agent_job_ended`.
   """
 
-  require Logger
-  alias Livekitex.TokenVerifier
+  alias Livekitex.{Config, TokenVerifier}
+  alias Livekitex.Proto.Livekit.WebhookEvent
+
+  @events ~w(room_started room_finished participant_joined participant_left
+             participant_connection_aborted track_published track_unpublished
+             egress_started egress_updated egress_ended ingress_started ingress_ended
+             agent_job_pending agent_job_started agent_job_ended)
+
+  @type error ::
+          :missing_auth_header
+          | :invalid_issuer
+          | :missing_sha256
+          | :hash_mismatch
+          | {:invalid_body, term()}
+          | TokenVerifier.error()
+
+  @doc "Known webhook event names."
+  @spec events() :: [String.t()]
+  def events, do: @events
 
   @doc """
-  Validates a webhook request and returns the parsed event.
+  Verifies a webhook and decodes its event.
 
-  ## Parameters
+  ## Options
 
-  - `body` - The raw webhook body (binary)
-  - `auth_header` - The Authorization header value
-  - `api_secret` - The API secret for signature validation
-
-  ## Returns
-
-  - `{:ok, event}` - Successfully validated webhook with parsed event
-  - `{:error, reason}` - Validation failed
-
-  ## Examples
-
-      iex> Livekitex.Webhook.validate_webhook(body, "Bearer token", "secret")
-      {:ok, %{event: "room_started", room: %{...}}}
-
-      iex> Livekitex.Webhook.validate_webhook(body, "invalid", "secret")
-      {:error, :invalid_signature}
+    * `:api_key`, `:api_secret` - credentials (default: `Livekitex.Config`)
+    * `:keys` - a map (or list of pairs) of `api_key => api_secret` when several keys
+      may sign webhooks
+    * `:leeway` - clock skew tolerance in seconds (default 60)
+    * `:skip_auth` - only decode, without verifying. Never use this in production.
   """
-  def validate_webhook(body, auth_header, api_secret)
-      when is_binary(body) and is_binary(auth_header) and is_binary(api_secret) do
-    with {:ok, token} <- extract_token(auth_header),
-         verifier <- TokenVerifier.new("webhook", api_secret),
-         {:ok, _claims} <- TokenVerifier.verify(verifier, token),
-         {:ok, event} <- parse_webhook_event(body) do
-      {:ok, event}
+  @spec receive_event(binary(), String.t() | nil, keyword()) ::
+          {:ok, WebhookEvent.t()} | {:error, error()}
+  def receive_event(body, auth_header, opts \\ []) when is_binary(body) do
+    with :ok <- maybe_verify(body, auth_header, opts) do
+      decode_event(body)
+    end
+  end
+
+  @doc """
+  Verifies the `Authorization` header against the raw body without decoding it.
+  Returns the verified JWT claims.
+  """
+  @spec verify(binary(), String.t() | nil, keyword()) :: {:ok, map()} | {:error, error()}
+  def verify(body, auth_header, opts \\ [])
+
+  def verify(_body, auth_header, _opts) when auth_header in [nil, ""],
+    do: {:error, :missing_auth_header}
+
+  def verify(body, auth_header, opts) when is_binary(body) and is_binary(auth_header) do
+    token = strip_bearer(auth_header)
+
+    with {:ok, api_key, api_secret} <- credentials(token, opts),
+         verifier = TokenVerifier.new(api_key, api_secret, leeway: Keyword.get(opts, :leeway, 60)),
+         {:ok, claims} <- TokenVerifier.verify_raw(verifier, token),
+         :ok <- check_hash(body, claims["sha256"]) do
+      {:ok, claims}
+    end
+  end
+
+  @doc "Decodes a webhook body into a `WebhookEvent` without verifying it."
+  @spec decode_event(binary()) :: {:ok, WebhookEvent.t()} | {:error, {:invalid_body, term()}}
+  def decode_event(body) when is_binary(body) do
+    case Protobuf.JSON.decode(body, WebhookEvent, ignore_unknown_fields: true) do
+      {:ok, event} -> {:ok, event}
+      {:error, error} -> {:error, {:invalid_body, error}}
+    end
+  end
+
+  defp maybe_verify(body, auth_header, opts) do
+    if opts[:skip_auth] do
+      :ok
     else
-      {:error, reason} -> {:error, reason}
+      with {:ok, _claims} <- verify(body, auth_header, opts), do: :ok
     end
   end
 
-  @doc """
-  Validates a webhook using Plug.Conn for web frameworks.
+  defp strip_bearer(header) do
+    header = String.trim(header)
 
-  ## Parameters
+    case header do
+      <<prefix::binary-size(7), token::binary>> ->
+        if String.downcase(prefix) == "bearer ", do: String.trim(token), else: header
 
-  - `conn` - Plug.Conn struct
-  - `api_secret` - The API secret for signature validation
-
-  ## Returns
-
-  - `{:ok, event}` - Successfully validated webhook with parsed event
-  - `{:error, reason}` - Validation failed
-  """
-  def validate_webhook_conn(conn, api_secret) do
-    with {:ok, body} <- read_body(conn),
-         auth_header <- get_auth_header(conn) do
-      validate_webhook(body, auth_header, api_secret)
+      _ ->
+        header
     end
   end
 
-  @doc """
-  Parses a webhook event from JSON body.
+  defp credentials(token, opts) do
+    case opts[:keys] && Map.new(opts[:keys]) do
+      keys when is_map(keys) ->
+        with {:ok, %{"iss" => iss}} when is_binary(iss) <- peek(token),
+             {:ok, secret} <- Map.fetch(keys, iss) do
+          {:ok, iss, secret}
+        else
+          _ -> {:error, :invalid_issuer}
+        end
 
-  ## Parameters
+      nil ->
+        api_key = opts[:api_key] || Config.get(:api_key)
+        api_secret = opts[:api_secret] || Config.get(:api_secret)
 
-  - `body` - JSON string containing the webhook event
+        if api_key in [nil, ""] or api_secret in [nil, ""] do
+          raise ArgumentError, "LiveKit api_key and api_secret are required to verify webhooks"
+        end
 
-  ## Returns
-
-  - `{:ok, event}` - Successfully parsed event
-  - `{:error, reason}` - Parsing failed
-  """
-  def parse_webhook_event(body) when is_binary(body) do
-    case Jason.decode(body) do
-      {:ok, json} ->
-        event = %{
-          event: Map.get(json, "event"),
-          id: Map.get(json, "id"),
-          created_at: Map.get(json, "createdAt"),
-          room: parse_room(Map.get(json, "room")),
-          participant: parse_participant(Map.get(json, "participant")),
-          track: parse_track(Map.get(json, "track")),
-          egress_info: parse_egress_info(Map.get(json, "egressInfo")),
-          ingress_info: parse_ingress_info(Map.get(json, "ingressInfo")),
-          num_dropped: Map.get(json, "numDropped", 0)
-        }
-
-        {:ok, event}
-
-      {:error, reason} ->
-        Logger.error("Failed to parse webhook JSON: #{inspect(reason)}")
-        {:error, :invalid_json}
+        {:ok, api_key, api_secret}
     end
   end
 
-  @doc """
-  Creates a Plug for webhook validation middleware.
+  defp peek(token) do
+    Joken.peek_claims(token)
+  rescue
+    _ -> {:error, :invalid_token}
+  end
 
-  ## Parameters
+  defp check_hash(_body, claim) when claim in [nil, ""], do: {:error, :missing_sha256}
 
-  - `api_secret` - The API secret for signature validation
-  - `opts` - Additional options (optional)
+  defp check_hash(body, claim) when is_binary(claim) do
+    expected = :crypto.hash(:sha256, body)
 
-  ## Returns
+    case Base.decode64(claim, padding: false) do
+      {:ok, actual} when byte_size(actual) == 32 ->
+        if Plug.Crypto.secure_compare(actual, expected), do: :ok, else: {:error, :hash_mismatch}
 
-  A Plug that validates webhooks and assigns the event to conn.assigns.webhook_event
-  """
-  def create_plug(api_secret, _opts \\ []) do
-    fn conn, _opts ->
-      case validate_webhook_conn(conn, api_secret) do
-        {:ok, event} ->
-          Logger.info("Webhook validated successfully: #{event.event}")
-          Plug.Conn.assign(conn, :webhook_event, event)
-
-        {:error, reason} ->
-          Logger.warning("Webhook validation failed: #{inspect(reason)}")
-
-          conn
-          |> Plug.Conn.put_status(401)
-          |> Plug.Conn.put_resp_content_type("application/json")
-          |> Plug.Conn.send_resp(401, Jason.encode!(%{error: "Unauthorized"}))
-          |> Plug.Conn.halt()
-      end
+      _ ->
+        {:error, :hash_mismatch}
     end
   end
 
-  # Private functions
-
-  defp extract_token("Bearer " <> token), do: {:ok, token}
-  defp extract_token(_), do: {:error, :invalid_auth_header}
-
-  defp read_body(conn) do
-    case Plug.Conn.read_body(conn) do
-      {:ok, body, _conn} -> {:ok, body}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp get_auth_header(conn) do
-    case Plug.Conn.get_req_header(conn, "authorization") do
-      [auth_header | _] -> auth_header
-      [] -> ""
-    end
-  end
-
-  defp parse_room(nil), do: nil
-
-  defp parse_room(room_data) when is_map(room_data) do
-    %{
-      sid: Map.get(room_data, "sid"),
-      name: Map.get(room_data, "name"),
-      empty_timeout: Map.get(room_data, "emptyTimeout"),
-      departure_timeout: Map.get(room_data, "departureTimeout"),
-      max_participants: Map.get(room_data, "maxParticipants"),
-      creation_time: Map.get(room_data, "creationTime"),
-      metadata: Map.get(room_data, "metadata"),
-      num_participants: Map.get(room_data, "numParticipants"),
-      num_publishers: Map.get(room_data, "numPublishers"),
-      active_recording: Map.get(room_data, "activeRecording", false)
-    }
-  end
-
-  defp parse_participant(nil), do: nil
-
-  defp parse_participant(participant_data) when is_map(participant_data) do
-    %{
-      sid: Map.get(participant_data, "sid"),
-      identity: Map.get(participant_data, "identity"),
-      state: Map.get(participant_data, "state"),
-      metadata: Map.get(participant_data, "metadata"),
-      joined_at: Map.get(participant_data, "joinedAt"),
-      name: Map.get(participant_data, "name"),
-      version: Map.get(participant_data, "version"),
-      permission: parse_permission(Map.get(participant_data, "permission")),
-      region: Map.get(participant_data, "region"),
-      is_publisher: Map.get(participant_data, "isPublisher", false),
-      kind: Map.get(participant_data, "kind"),
-      attributes: Map.get(participant_data, "attributes", %{}),
-      tracks: parse_tracks(Map.get(participant_data, "tracks", []))
-    }
-  end
-
-  defp parse_permission(nil), do: nil
-
-  defp parse_permission(permission_data) when is_map(permission_data) do
-    %{
-      can_subscribe: Map.get(permission_data, "canSubscribe", true),
-      can_publish: Map.get(permission_data, "canPublish", true),
-      can_publish_data: Map.get(permission_data, "canPublishData", true),
-      can_publish_sources: Map.get(permission_data, "canPublishSources", []),
-      hidden: Map.get(permission_data, "hidden", false),
-      recorder: Map.get(permission_data, "recorder", false),
-      can_update_metadata: Map.get(permission_data, "canUpdateMetadata", false),
-      agent: Map.get(permission_data, "agent", false)
-    }
-  end
-
-  defp parse_track(nil), do: nil
-
-  defp parse_track(track_data) when is_map(track_data) do
-    %{
-      sid: Map.get(track_data, "sid"),
-      type: Map.get(track_data, "type"),
-      name: Map.get(track_data, "name"),
-      muted: Map.get(track_data, "muted", false),
-      width: Map.get(track_data, "width"),
-      height: Map.get(track_data, "height"),
-      simulcast: Map.get(track_data, "simulcast", false),
-      disable_dtx: Map.get(track_data, "disableDtx", false),
-      source: Map.get(track_data, "source"),
-      layers: parse_video_layers(Map.get(track_data, "layers", [])),
-      mime_type: Map.get(track_data, "mimeType"),
-      mid: Map.get(track_data, "mid"),
-      codecs: Map.get(track_data, "codecs", []),
-      stereo: Map.get(track_data, "stereo", false),
-      disable_red: Map.get(track_data, "disableRed", false)
-    }
-  end
-
-  defp parse_tracks(tracks) when is_list(tracks) do
-    Enum.map(tracks, &parse_track/1)
-  end
-
-  defp parse_video_layers(layers) when is_list(layers) do
-    Enum.map(layers, fn layer ->
-      %{
-        quality: Map.get(layer, "quality"),
-        width: Map.get(layer, "width"),
-        height: Map.get(layer, "height"),
-        bitrate: Map.get(layer, "bitrate"),
-        ssrc: Map.get(layer, "ssrc")
-      }
-    end)
-  end
-
-  defp parse_egress_info(nil), do: nil
-
-  defp parse_egress_info(egress_data) when is_map(egress_data) do
-    %{
-      egress_id: Map.get(egress_data, "egressId"),
-      room_id: Map.get(egress_data, "roomId"),
-      room_name: Map.get(egress_data, "roomName"),
-      status: Map.get(egress_data, "status"),
-      started_at: Map.get(egress_data, "startedAt"),
-      ended_at: Map.get(egress_data, "endedAt"),
-      updated_at: Map.get(egress_data, "updatedAt"),
-      details: Map.get(egress_data, "details"),
-      error: Map.get(egress_data, "error")
-    }
-  end
-
-  defp parse_ingress_info(nil), do: nil
-
-  defp parse_ingress_info(ingress_data) when is_map(ingress_data) do
-    %{
-      ingress_id: Map.get(ingress_data, "ingressId"),
-      name: Map.get(ingress_data, "name"),
-      stream_key: Map.get(ingress_data, "streamKey"),
-      url: Map.get(ingress_data, "url"),
-      input_type: Map.get(ingress_data, "inputType"),
-      bypass_transcoding: Map.get(ingress_data, "bypassTranscoding", false),
-      room_name: Map.get(ingress_data, "roomName"),
-      participant_identity: Map.get(ingress_data, "participantIdentity"),
-      participant_name: Map.get(ingress_data, "participantName"),
-      reusable: Map.get(ingress_data, "reusable", false)
-    }
-  end
+  defp check_hash(_body, _claim), do: {:error, :hash_mismatch}
 end

@@ -1,318 +1,142 @@
 defmodule Livekitex do
   @moduledoc """
-  LiveKit Elixir SDK - A comprehensive client library for LiveKit.
-
-  LiveKit is an open-source WebRTC infrastructure for building real-time
-  video and audio applications. This SDK provides a complete set of tools
-  for integrating with LiveKit servers, including:
-
-  - Room management and participant control
-  - Access token generation and validation
-  - Webhook processing and validation
-  - Structured logging and telemetry
-
-  ## Quick Start
-
-      # Configure the SDK
-      config :livekitex,
-        api_key: "your_api_key",
-        api_secret: "your_api_secret",
-        host: "your_livekit_host"
-
-      # Create a room service client
-      client = Livekitex.room_service()
-
-      # Create a room
-      {:ok, room} = Livekitex.RoomService.create_room(client, "my-room")
-
-      # Generate an access token
-      token = Livekitex.access_token("participant_identity")
-      |> Livekitex.AccessToken.add_grant(%Livekitex.Grants.VideoGrant{
-        room_join: true,
-        room: "my-room"
-      })
-      |> Livekitex.AccessToken.to_jwt()
+  Elixir server SDK for [LiveKit](https://livekit.io).
 
   ## Configuration
 
-  The SDK can be configured through multiple sources:
+      # config/runtime.exs
+      config :livekitex,
+        url: System.fetch_env!("LIVEKIT_URL"),          # e.g. "wss://my-project.livekit.cloud"
+        api_key: System.fetch_env!("LIVEKIT_API_KEY"),
+        api_secret: System.fetch_env!("LIVEKIT_API_SECRET")
 
-  1. Application configuration (config.exs)
-  2. Environment variables
-  3. Runtime configuration
+  ## Quick tour
 
-  See `Livekitex.Config` for detailed configuration options.
+      client = Livekitex.client()
+
+      {:ok, room} = Livekitex.RoomService.create_room(client, "standup")
+
+      {:ok, jwt} = Livekitex.room_join_token("alice", "standup")
+
+      {:ok, _dispatch} =
+        Livekitex.AgentDispatchService.create_dispatch(client, "standup", "notetaker")
 
   ## Services
 
-  - `Livekitex.RoomService` - Room and participant management
-  - `Livekitex.EgressService` - Egress management
-  - `Livekitex.SIPService` - SIP trunks, dispatch rules, and participants
-  - `Livekitex.Webhook` - Webhook validation and processing
-  - `Livekitex.AccessToken` - Token generation and validation
+    * `Livekitex.RoomService` - rooms, participants, data, RPC
+    * `Livekitex.EgressService` - recording and streaming
+    * `Livekitex.IngressService` - RTMP/WHIP/URL ingestion
+    * `Livekitex.SIPService` - SIP trunks, dispatch rules, calls
+    * `Livekitex.AgentDispatchService` - dispatching LiveKit Agents
+    * `Livekitex.ConnectorService` - WhatsApp/Twilio (experimental, Cloud)
+    * `Livekitex.PhoneNumberService` - phone numbers (experimental, Cloud)
+
+  Tokens: `Livekitex.AccessToken`, `Livekitex.TokenVerifier`.
+  Webhooks: `Livekitex.Webhook`, `Livekitex.Webhook.Plug`.
+  Token endpoint for client SDKs: `Livekitex.TokenSource.Plug`.
   """
 
-  alias Livekitex.{Config, RoomService, EgressService, AccessToken, Grants}
+  alias Livekitex.{AccessToken, Client, Config, Webhook}
+
+  @version Mix.Project.config()[:version]
 
   @doc """
-  Creates a egress service client with current configuration.
-
-  ## Examples
-
-      client = Livekitex.egress_service()
-      # EgressService calls
+  Builds a `Livekitex.Client` from options, falling back to application config.
+  See `Livekitex.Client.new/1`.
   """
-  def egress_service do
-    config = Config.client_config()
-    EgressService.create(config.api_key, config.api_secret, host: config.host)
-  end
+  @spec client(keyword()) :: Client.t()
+  def client(opts \\ []), do: Client.new(opts)
+
+  @doc false
+  @deprecated "Use Livekitex.client/1"
+  def room_service, do: client()
+
+  @doc false
+  @deprecated "Use Livekitex.client/1"
+  def egress_service, do: client()
+
+  @doc false
+  @deprecated "Use Livekitex.client/1"
+  def sip_service(opts \\ []), do: client(opts)
 
   @doc """
-  Creates a room service client with current configuration.
+  Builds an access token using the configured credentials.
 
-  ## Examples
-
-      client = Livekitex.room_service()
-      {:ok, room} = Livekitex.RoomService.create_room(client, "my-room")
+  `opts` are passed to `Livekitex.AccessToken.create/3` (`:name`, `:ttl`, `:metadata`,
+  `:attributes`, `:kind`).
   """
-  def room_service do
-    config = Config.client_config()
-    RoomService.create(config.api_key, config.api_secret, host: config.host)
-  end
-
-  @doc """
-  Creates a SIP service client with current configuration.
-
-  For LiveKit Cloud, ensure `config.host` is your cloud domain without scheme
-  (e.g. "test-xxxx.livekit.cloud"). HTTPS is used by default.
-
-  ## Examples
-
-      client = Livekitex.sip_service()
-      # SIPService calls
-  """
-  def sip_service(opts \\ []) do
-    config = Config.client_config()
-
-    base_opts = [host: config.host] ++ opts
-
-    Livekitex.SIPService.create(config.api_key, config.api_secret, base_opts)
-  end
-
-  @doc """
-  Creates an access token for the given identity.
-
-  ## Parameters
-
-  - `identity` - Participant identity
-  - `opts` - Token options (optional)
-
-  ## Options
-
-  - `:ttl` - Token time-to-live in seconds (default: 600)
-  - `:name` - Participant name
-  - `:metadata` - Additional metadata
-  - `:attributes` - Additional attributes
-
-  ## Examples
-
-      token = Livekitex.access_token("user123")
-      |> Livekitex.AccessToken.set_video_grant(%Livekitex.Grants.VideoGrant{
-        room_join: true,
-        room: "my-room"
-      })
-      |> Livekitex.AccessToken.to_jwt()
-  """
+  @spec access_token(String.t(), keyword()) :: AccessToken.t()
   def access_token(identity, opts \\ []) do
     config = Config.get()
-
-    AccessToken.create(config.api_key, config.api_secret,
-      identity: identity,
-      ttl: Keyword.get(opts, :ttl, 600),
-      name: Keyword.get(opts, :name),
-      metadata: Keyword.get(opts, :metadata),
-      attributes: Keyword.get(opts, :attributes)
-    )
+    AccessToken.create(config.api_key, config.api_secret, Keyword.put(opts, :identity, identity))
   end
 
   @doc """
-  Creates a room join token for the given identity and room.
-
-  This is a convenience function that creates an access token with
-  room join permissions.
-
-  ## Parameters
-
-  - `identity` - Participant identity
-  - `room` - Room name
-  - `opts` - Additional options
+  Signs a token that lets `identity` join `room`.
 
   ## Options
 
-  - `:ttl` - Token time-to-live in seconds (default: 3600)
-  - `:can_publish` - Can publish tracks (default: true)
-  - `:can_subscribe` - Can subscribe to tracks (default: true)
-  - `:can_publish_data` - Can publish data (default: true)
-  - `:hidden` - Hidden participant (default: false)
-  - `:recorder` - Recorder participant (default: false)
-  - `:metadata` - Participant metadata
-
-  ## Examples
-
-      {:ok, token} = Livekitex.room_join_token("user123", "my-room")
-
-      {:ok, token} = Livekitex.room_join_token("user123", "my-room",
-        can_publish: false,
-        metadata: %{"role" => "viewer"}
-      )
+    * `:can_publish`, `:can_subscribe`, `:can_publish_data`, `:can_publish_sources`,
+      `:hidden` and any other `VideoGrant` field
+    * `:room_config` - room configuration applied if this token creates the room,
+      e.g. `[agents: [[agent_name: "notetaker"]]]`
+    * `:name`, `:ttl`, `:metadata`, `:attributes`, `:kind`
   """
-  def room_join_token(identity, room, opts \\ []) do
-    video_grant = %Grants.VideoGrant{
-      room_join: true,
-      room: room,
-      can_publish: Keyword.get(opts, :can_publish, true),
-      can_subscribe: Keyword.get(opts, :can_subscribe, true),
-      can_publish_data: Keyword.get(opts, :can_publish_data, true),
-      hidden: Keyword.get(opts, :hidden, false),
-      recorder: Keyword.get(opts, :recorder, false)
-    }
+  @spec room_join_token(String.t(), String.t(), keyword()) :: {:ok, String.t()} | {:error, term()}
+  def room_join_token(identity, room, opts \\ [])
 
-    token =
-      access_token(identity, opts)
-      |> AccessToken.set_video_grant(video_grant)
+  def room_join_token(_identity, room, _opts) when room in [nil, ""],
+    do: {:error, :room_required}
 
-    case AccessToken.to_jwt(token) do
+  def room_join_token(identity, room, opts) do
+    {token_opts, opts} = Keyword.split(opts, [:name, :ttl, :metadata, :attributes, :kind])
+    {room_config, grant_opts} = Keyword.pop(opts, :room_config)
+
+    identity
+    |> access_token(token_opts)
+    |> AccessToken.set_video_grant(Keyword.merge([room_join: true, room: room], grant_opts))
+    |> then(&if(room_config, do: AccessToken.set_room_config(&1, room_config), else: &1))
+    |> AccessToken.to_jwt()
+    |> case do
       {:ok, jwt, _claims} -> {:ok, jwt}
-      {:error, reason} -> {:error, reason}
+      error -> error
     end
   end
 
   @doc """
-  Creates an admin token with full permissions.
-
-  This token can be used for administrative operations like
-  creating rooms, managing participants, etc.
-
-  ## Parameters
-
-  - `opts` - Token options (optional)
-
-  ## Options
-
-  - `:ttl` - Token time-to-live in seconds (default: 3600)
-  - `:room` - Specific room (optional, for room-specific admin)
-
-  ## Examples
-
-      {:ok, token} = Livekitex.admin_token()
-
-      {:ok, token} = Livekitex.admin_token(room: "my-room", ttl: 7200)
+  Signs an administrative token (room create/list/admin and recording).
+  Prefer the service modules, which mint narrowly scoped tokens per call.
   """
+  @spec admin_token(keyword()) :: {:ok, String.t()} | {:error, term()}
   def admin_token(opts \\ []) do
-    video_grant = %Grants.VideoGrant{
-      room_admin: true,
-      room_list: true,
-      room_record: true,
-      room_create: true,
-      room: Keyword.get(opts, :room)
-    }
+    config = Config.get()
 
-    token =
-      access_token("admin", opts)
-      |> AccessToken.set_video_grant(video_grant)
+    grant =
+      Keyword.merge(
+        [room_create: true, room_list: true, room_admin: true, room_record: true],
+        Keyword.take(opts, [:room])
+      )
 
-    case AccessToken.to_jwt(token) do
+    config.api_key
+    |> AccessToken.create(config.api_secret, Keyword.take(opts, [:identity, :ttl]))
+    |> AccessToken.set_video_grant(grant)
+    |> AccessToken.to_jwt()
+    |> case do
       {:ok, jwt, _claims} -> {:ok, jwt}
-      {:error, reason} -> {:error, reason}
+      error -> error
     end
   end
 
-  @doc """
-  Validates a webhook request.
+  @doc "Verifies and decodes a webhook. See `Livekitex.Webhook.receive_event/3`."
+  defdelegate receive_webhook(body, auth_header, opts \\ []), to: Webhook, as: :receive_event
 
-  ## Parameters
+  @doc "Returns the library version."
+  @spec version() :: String.t()
+  def version, do: @version
 
-  - `body` - Raw webhook body
-  - `auth_header` - Authorization header
-  - `api_secret` - API secret (optional, uses configured secret if not provided)
+  @doc "Returns the resolved configuration."
+  defdelegate config, to: Config, as: :get
 
-  ## Examples
-
-      {:ok, event} = Livekitex.validate_webhook(body, auth_header)
-
-      {:ok, event} = Livekitex.validate_webhook(body, auth_header, "custom_secret")
-  """
-  def validate_webhook(body, auth_header, api_secret \\ nil) do
-    secret = api_secret || Config.get(:api_secret)
-    Livekitex.Webhook.validate_webhook(body, auth_header, secret)
-  end
-
-  @doc """
-  Starts the LiveKit SDK application.
-
-  This sets up telemetry and other infrastructure.
-
-  ## Examples
-
-      Livekitex.start()
-  """
-  def start do
-    # Setup telemetry
-    Livekitex.Logger.setup_telemetry()
-    :ok
-  end
-
-  @doc """
-  Stops the LiveKit SDK application.
-
-  ## Examples
-
-      Livekitex.stop()
-  """
-  def stop do
-    # Teardown telemetry
-    Livekitex.Logger.teardown_telemetry()
-    :ok
-  end
-
-  @doc """
-  Gets the current SDK version.
-
-  ## Examples
-
-  iex> is_binary(Livekitex.version())
-  true
-  """
-  def version do
-    Application.spec(:livekitex, :vsn) |> to_string()
-  end
-
-  @doc """
-  Gets the current configuration.
-
-  ## Examples
-
-      config = Livekitex.config()
-      # %{host: "localhost:7880", api_key: "...", ...}
-  """
-  def config do
-    Config.get()
-  end
-
-  @doc """
-  Updates configuration at runtime.
-
-  ## Parameters
-
-  - `key` - Configuration key
-  - `value` - Configuration value
-
-  ## Examples
-
-      Livekitex.configure(:host, "production.livekit.io:443")
-      Livekitex.configure(:use_tls, true)
-  """
-  def configure(key, value) do
-    Config.put(key, value)
-  end
+  @doc "Sets a runtime configuration override."
+  defdelegate configure(key, value), to: Config, as: :put
 end

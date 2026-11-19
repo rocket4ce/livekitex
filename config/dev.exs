@@ -1,10 +1,7 @@
 import Config
 
+# Defaults for a local `livekit-server --dev` instance.
 config :livekitex,
+  url: "http://localhost:7880",
   api_key: "devkey",
-  api_secret: "secret",
-  host: "localhost",
-  port: 7880
-
-# Tesla HTTP client configuration
-config :tesla, Tesla.Adapter.Finch, name: Livekitex.Finch
+  api_secret: "secret"

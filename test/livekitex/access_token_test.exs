@@ -1,213 +1,168 @@
 defmodule Livekitex.AccessTokenTest do
   use ExUnit.Case, async: true
 
-  alias Livekitex.AccessToken
-  alias Livekitex.Grants.{VideoGrant, SipGrant}
+  alias Livekitex.{AccessToken, TokenVerifier}
+  alias Livekitex.Grants.{ClaimGrant, VideoGrant}
+  alias Livekitex.Proto.Livekit.{RoomAgentDispatch, RoomConfiguration}
 
-  describe "create/3" do
-    test "creates a new AccessToken with basic options" do
-      token = AccessToken.create("api_key", "api_secret", identity: "user", name: "User Name")
+  doctest Livekitex.Grants.VideoGrant
 
-      assert %AccessToken{} = token
-      assert token.api_key == "api_key"
-      assert token.api_secret == "api_secret"
-      assert token.identity == "user"
-      # default TTL
-      assert token.ttl == 600
-      assert token.grants.name == "User Name"
-    end
+  defp claims(token) do
+    {:ok, jwt, _} = AccessToken.to_jwt(token)
+    {:ok, claims} = Joken.peek_claims(jwt)
+    claims
+  end
 
-    test "creates AccessToken with custom TTL" do
-      token = AccessToken.create("api_key", "api_secret", identity: "user", ttl: 1200)
+  defp new(opts \\ []), do: AccessToken.create("devkey", "secret", opts)
 
-      assert token.ttl == 1200
-    end
+  test "registered claims and 6h default ttl" do
+    claims =
+      new(identity: "alice")
+      |> AccessToken.set_video_grant(room_join: true, room: "r")
+      |> claims()
 
-    test "creates AccessToken with metadata and attributes" do
-      token =
-        AccessToken.create("api_key", "api_secret",
-          identity: "user",
-          metadata: "test-metadata",
-          attributes: %{"role" => "admin"}
-        )
+    assert claims["iss"] == "devkey"
+    assert claims["sub"] == "alice"
+    assert claims["exp"] - claims["nbf"] == 6 * 3600
+    assert claims["iat"] == claims["nbf"]
+    assert claims["video"] == %{"roomJoin" => true, "room" => "r"}
+  end
 
-      assert token.grants.metadata == "test-metadata"
-      assert token.grants.attributes == %{"role" => "admin"}
+  test "serializes every video grant field in camelCase" do
+    grant =
+      VideoGrant.new(
+        room_create: true,
+        room_list: true,
+        room_record: true,
+        room_admin: true,
+        room_join: true,
+        room: "r",
+        destination_room: "r2",
+        can_publish: false,
+        can_subscribe: true,
+        can_publish_data: false,
+        can_publish_sources: [:camera, "MICROPHONE"],
+        can_update_own_metadata: true,
+        can_subscribe_metrics: true,
+        can_manage_agent_session: true,
+        ingress_admin: true,
+        hidden: true,
+        recorder: true,
+        agent: true
+      )
+
+    assert VideoGrant.to_map(grant) == %{
+             "roomCreate" => true,
+             "roomList" => true,
+             "roomRecord" => true,
+             "roomAdmin" => true,
+             "roomJoin" => true,
+             "room" => "r",
+             "destinationRoom" => "r2",
+             "canPublish" => false,
+             "canSubscribe" => true,
+             "canPublishData" => false,
+             "canPublishSources" => ["camera", "microphone"],
+             "canUpdateOwnMetadata" => true,
+             "canSubscribeMetrics" => true,
+             "canManageAgentSession" => true,
+             "ingressAdmin" => true,
+             "hidden" => true,
+             "recorder" => true,
+             "agent" => true
+           }
+  end
+
+  test "new grant groups, kind and extra claims" do
+    claims =
+      new(identity: "worker", kind: :agent)
+      |> AccessToken.set_agent_grant(admin: true, dispatch_admin: true, simulation_admin: false)
+      |> AccessToken.set_inference_grant(perform: true)
+      |> AccessToken.set_observability_grant(write: true)
+      |> AccessToken.set_sip_grant(call: true)
+      |> AccessToken.set_kind_details([:cloud_agent])
+      |> AccessToken.put_claim("agentEndpoint", %{"call" => true, "agentName" => "a"})
+      |> claims()
+
+    assert claims["kind"] == "agent"
+    assert claims["kindDetails"] == ["cloud_agent"]
+
+    assert claims["agent"] == %{
+             "admin" => true,
+             "dispatchAdmin" => true,
+             "simulationAdmin" => false
+           }
+
+    assert claims["inference"] == %{"perform" => true}
+    assert claims["observability"] == %{"write" => true}
+    assert claims["sip"] == %{"call" => true}
+    assert claims["agentEndpoint"] == %{"call" => true, "agentName" => "a"}
+    refute Map.has_key?(claims, "video")
+  end
+
+  test "room config with agent dispatch round-trips" do
+    token =
+      new(identity: "alice")
+      |> AccessToken.set_video_grant(room_join: true, room: "r")
+      |> AccessToken.set_room_config(
+        empty_timeout: 120,
+        tags: %{team: "a"},
+        agents: [[agent_name: "support", metadata: "{}"]]
+      )
+
+    assert claims(token)["roomConfig"] == %{
+             "emptyTimeout" => 120,
+             "tags" => %{"team" => "a"},
+             "agents" => [%{"agentName" => "support", "metadata" => "{}"}]
+           }
+
+    {:ok, jwt, _} = AccessToken.to_jwt(token)
+    {:ok, grant} = TokenVerifier.verify(TokenVerifier.new("devkey", "secret"), jwt)
+
+    assert %ClaimGrant{
+             identity: "alice",
+             room_config: %RoomConfiguration{
+               empty_timeout: 120,
+               agents: [%RoomAgentDispatch{agent_name: "support"}]
+             }
+           } = grant
+  end
+
+  test "joining a room requires an identity" do
+    assert {:error, :identity_required} =
+             new() |> AccessToken.set_video_grant(room_join: true) |> AccessToken.to_jwt()
+
+    assert_raise ArgumentError, fn ->
+      new() |> AccessToken.set_video_grant(room_join: true) |> AccessToken.to_jwt!()
     end
   end
 
-  describe "set_video_grant/2" do
-    test "sets video grant from VideoGrant struct" do
-      token = AccessToken.create("api_key", "api_secret", identity: "user")
-      video_grant = VideoGrant.new(room_join: true, can_publish: true)
+  test "service tokens without identity are allowed" do
+    assert {:ok, _jwt, claims} =
+             new() |> AccessToken.set_video_grant(room_list: true) |> AccessToken.to_jwt()
 
-      updated_token = AccessToken.set_video_grant(token, video_grant)
-
-      assert updated_token.grants.video.room_join == true
-      assert updated_token.grants.video.can_publish == true
-    end
-
-    test "sets video grant from keyword list" do
-      token = AccessToken.create("api_key", "api_secret", identity: "user")
-
-      updated_token = AccessToken.set_video_grant(token, room_join: true, can_publish: false)
-
-      assert updated_token.grants.video.room_join == true
-      assert updated_token.grants.video.can_publish == false
-    end
+    refute Map.has_key?(claims, "sub")
   end
 
-  describe "set_sip_grant/2" do
-    test "sets SIP grant from SipGrant struct" do
-      token = AccessToken.create("api_key", "api_secret", identity: "user")
-      sip_grant = SipGrant.new(admin: true, call: false)
-
-      updated_token = AccessToken.set_sip_grant(token, sip_grant)
-
-      assert updated_token.grants.sip.admin == true
-      assert updated_token.grants.sip.call == false
-    end
-
-    test "sets SIP grant from keyword list" do
-      token = AccessToken.create("api_key", "api_secret", identity: "user")
-
-      updated_token = AccessToken.set_sip_grant(token, admin: true, call: true)
-
-      assert updated_token.grants.sip.admin == true
-      assert updated_token.grants.sip.call == true
-    end
+  test "rejects unknown grant fields and kinds" do
+    assert_raise KeyError, fn -> AccessToken.set_video_grant(new(), room_jion: true) end
+    assert_raise ArgumentError, fn -> AccessToken.set_kind(new(), :robot) end
   end
 
-  describe "metadata and attribute setters" do
-    test "set_metadata/2 updates metadata" do
-      token = AccessToken.create("api_key", "api_secret", identity: "user")
-      updated_token = AccessToken.set_metadata(token, "new-metadata")
+  test "custom ttl, metadata, attributes and name" do
+    claims =
+      new(identity: "a", ttl: 60, name: "A", metadata: "m", attributes: %{"k" => "v"})
+      |> AccessToken.set_video_grant(room_join: true, room: "r")
+      |> AccessToken.set_room_preset("preset")
+      |> claims()
 
-      assert updated_token.grants.metadata == "new-metadata"
-    end
+    assert claims["exp"] - claims["nbf"] == 60
 
-    test "set_attributes/2 updates attributes" do
-      token = AccessToken.create("api_key", "api_secret", identity: "user")
-      updated_token = AccessToken.set_attributes(token, %{"role" => "moderator"})
-
-      assert updated_token.grants.attributes == %{"role" => "moderator"}
-    end
-
-    test "set_name/2 updates name" do
-      token = AccessToken.create("api_key", "api_secret", identity: "user")
-      updated_token = AccessToken.set_name(token, "New Name")
-
-      assert updated_token.grants.name == "New Name"
-    end
-
-    test "set_sha256/2 updates SHA256" do
-      token = AccessToken.create("api_key", "api_secret", identity: "user")
-      updated_token = AccessToken.set_sha256(token, "abc123")
-
-      assert updated_token.grants.sha256 == "abc123"
-    end
-
-    test "set_room_config/2 updates room config" do
-      token = AccessToken.create("api_key", "api_secret", identity: "user")
-      config = %{"maxParticipants" => 10}
-      updated_token = AccessToken.set_room_config(token, config)
-
-      assert updated_token.grants.room_config == config
-    end
-
-    test "set_room_preset/2 updates room preset" do
-      token = AccessToken.create("api_key", "api_secret", identity: "user")
-      updated_token = AccessToken.set_room_preset(token, "group_call")
-
-      assert updated_token.grants.room_preset == "group_call"
-    end
-  end
-
-  describe "to_jwt/1" do
-    test "generates a valid JWT token with video grant" do
-      token = AccessToken.create("devkey", "secret", identity: "user", name: "User Name")
-      video_grant = VideoGrant.new(room_join: true, can_publish: true)
-      token = AccessToken.set_video_grant(token, video_grant)
-
-      {:ok, jwt, _claims} = AccessToken.to_jwt(token)
-
-      assert is_binary(jwt)
-    end
-
-    test "generates a valid JWT token with SIP grant" do
-      token = AccessToken.create("devkey", "secret", identity: "user")
-      sip_grant = SipGrant.new(admin: true)
-      token = AccessToken.set_sip_grant(token, sip_grant)
-
-      {:ok, jwt, _claims} = AccessToken.to_jwt(token)
-
-      assert is_binary(jwt)
-    end
-
-    test "fails when no grants are provided" do
-      token = AccessToken.create("devkey", "secret", identity: "user")
-
-      {:error, reason} = AccessToken.to_jwt(token)
-
-      assert reason == "VideoGrant or SipGrant is required"
-    end
-
-    test "includes correct claims in JWT" do
-      token =
-        AccessToken.create("devkey", "secret",
-          identity: "user123",
-          name: "Test User",
-          metadata: "test-metadata"
-        )
-
-      video_grant = VideoGrant.new(room_join: true, can_publish: false, room: "test-room")
-      token = AccessToken.set_video_grant(token, video_grant)
-
-      {:ok, _jwt, claims} = AccessToken.to_jwt(token)
-
-      assert claims["sub"] == "user123"
-      assert claims["iss"] == "devkey"
-      assert claims["name"] == "Test User"
-      assert claims["metadata"] == "test-metadata"
-      assert claims["video"]["roomJoin"] == true
-      assert claims["video"]["canPublish"] == false
-      assert claims["video"]["room"] == "test-room"
-      assert is_integer(claims["exp"])
-      assert is_integer(claims["iat"])
-      assert is_integer(claims["nbf"])
-    end
-
-    test "filters out nil values from claims" do
-      token = AccessToken.create("devkey", "secret", identity: "user123")
-      video_grant = VideoGrant.new(room_join: true, can_publish: nil)
-      token = AccessToken.set_video_grant(token, video_grant)
-
-      {:ok, _jwt, claims} = AccessToken.to_jwt(token)
-
-      assert claims["video"]["roomJoin"] == true
-      refute Map.has_key?(claims["video"], "canPublish")
-      refute Map.has_key?(claims, "name")
-      refute Map.has_key?(claims, "metadata")
-    end
-  end
-
-  describe "to_jwt!/1" do
-    test "returns JWT string on success" do
-      token = AccessToken.create("devkey", "secret", identity: "user")
-      video_grant = VideoGrant.new(room_join: true)
-      token = AccessToken.set_video_grant(token, video_grant)
-
-      jwt = AccessToken.to_jwt!(token)
-
-      assert is_binary(jwt)
-    end
-
-    test "raises on error" do
-      token = AccessToken.create("devkey", "secret", identity: "user")
-
-      assert_raise RuntimeError, ~r/Failed to generate JWT/, fn ->
-        AccessToken.to_jwt!(token)
-      end
-    end
+    assert %{
+             "name" => "A",
+             "metadata" => "m",
+             "attributes" => %{"k" => "v"},
+             "roomPreset" => "preset"
+           } = claims
   end
 end
