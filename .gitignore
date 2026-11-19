@@ -24,3 +24,7 @@ livekitex-*.tar
 
 .DS_Store
 .vscode/
+
+# Editor / language server caches
+.elixir_ls/
+.lexical/

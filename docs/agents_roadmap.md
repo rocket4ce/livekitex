@@ -1,3 +1,14 @@
+> **Status (November 2026): vision document, not planned for this library.**
+>
+> A native Elixir agent worker would have to register over LiveKit's undocumented worker
+> protocol (`livekit_agent.proto`) *and* join rooms through WebRTC to process audio/video.
+> No mature Elixir LiveKit realtime client exists, so this is a separate, multi-month project.
+>
+> What livekitex 0.2 provides instead is the server-side control of agents built with the
+> official Python/Node.js frameworks: `Livekitex.AgentDispatchService`, `roomConfig.agents` in
+> access tokens and `CreateRoom`, `agent_job_*` webhooks, and `RoomService.perform_rpc/6`.
+> See "LiveKit Agents from Elixir" in the README.
+
 ## Roadmap: LiveKit Agents Integration in livekitex
 
 This document outlines the plan to add support for “Agents” (LiveKit Agents) to this Elixir library, including API design, implementation phases, examples, testing, deployment, and metrics. The goal is to provide an idiomatic Elixir experience to create, run, and operate conversational/multimodal agents on top of LiveKit.
