@@ -218,5 +218,80 @@ defmodule Livekitex.HardeningTest do
       auth = sign_webhook(body)
       assert {:ok, _} = Webhook.receive_event(body, auth, keys: [{"devkey", "secret"}])
     end
+
+    test "a flat `agent:` is a video permission, not the agent grant" do
+      jwt = sign(%{"video" => %{"roomJoin" => true, "agent" => true}})
+
+      assert {:ok, _} = TokenVerifier.verify_permissions(@verifier, jwt, agent: true)
+      assert {:ok, _} = TokenVerifier.verify_permissions(@verifier, jwt, video: [agent: true])
+
+      assert {:error, {:missing_permissions, [video: {:agent, true}]}} =
+               TokenVerifier.verify_permissions(@verifier, sign(%{"video" => %{}}), agent: true)
+    end
+
+    test "a list of groups is still read as groups" do
+      jwt = sign(%{"video" => %{"roomAdmin" => true}, "agent" => %{"admin" => true}})
+
+      assert {:ok, _} =
+               TokenVerifier.verify_permissions(@verifier, jwt,
+                 video: [room_admin: true],
+                 agent: [admin: true]
+               )
+
+      assert {:error, {:missing_permissions, [agent: {:admin, true}]}} =
+               TokenVerifier.verify_permissions(@verifier, sign(%{}), agent: [admin: true])
+    end
+  end
+
+  describe "tokens that LiveKit would reject" do
+    test "a non-positive ttl is an error, not an already-expired token" do
+      for ttl <- [0, -5] do
+        assert {:error, :invalid_ttl} =
+                 AccessToken.create("devkey", "secret", identity: "a", ttl: ttl)
+                 |> AccessToken.to_jwt()
+      end
+    end
+
+    test "a missing api_key is an error" do
+      assert {:error, :missing_api_key} = AccessToken.to_jwt(AccessToken.create("", "secret"))
+      assert {:error, :missing_api_key} = AccessToken.to_jwt(AccessToken.create(nil, "secret"))
+    end
+
+    test "an unknown grant group is an ArgumentError" do
+      token = AccessToken.create("devkey", "secret")
+
+      assert_raise ArgumentError, ~r/unknown grant :nope/, fn ->
+        AccessToken.put_grants(token, nope: [admin: true])
+      end
+    end
+
+    test "a grant of the wrong type is an ArgumentError" do
+      token = AccessToken.create("devkey", "secret")
+
+      assert_raise ArgumentError, ~r/expected a Livekitex.Grants.VideoGrant/, fn ->
+        AccessToken.set_video_grant(token, %Livekitex.Grants.SipGrant{call: true})
+      end
+    end
+  end
+
+  describe "unconfigured webhook endpoint" do
+    test "receive_event returns an error instead of raising" do
+      assert {:error, :missing_credentials} =
+               Webhook.receive_event(~s({}), "Bearer a.b.c", api_key: "", api_secret: "")
+    end
+
+    test "the plug answers 401 instead of crashing the request" do
+      opts =
+        Livekitex.Webhook.Plug.init(handler: fn _e, _c -> :ok end, api_key: "", api_secret: "")
+
+      conn =
+        :post
+        |> conn("/hook", ~s({"event":"room_started"}))
+        |> put_req_header("authorization", "Bearer a.b.c")
+        |> put_req_header("content-type", "application/webhook+json")
+        |> Livekitex.Webhook.Plug.call(opts)
+
+      assert conn.status == 401
+    end
   end
 end

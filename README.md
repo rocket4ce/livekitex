@@ -27,7 +27,7 @@ generated from [livekit/protocol](https://github.com/livekit/protocol) **v1.54.1
 ```elixir
 def deps do
   [
-    {:livekitex, "~> 0.2.0"}
+    {:livekitex, "~> 0.2.1"}
   ]
 end
 ```
@@ -245,6 +245,11 @@ plug Plug.Parsers,
 
 Without the plug: `Livekitex.Webhook.receive_event(raw_body, authorization_header)`.
 
+Failures are atoms: `:missing_auth_header`, `:missing_credentials`, `:invalid_signature`,
+`:invalid_issuer`, `:token_expired`, `:missing_sha256`, `:hash_mismatch`. The plug answers
+`401` for all of them, `400` for a body that is not a webhook event, and `413` past
+`:max_body_length`.
+
 ## Token endpoint for client SDKs
 
 `Livekitex.TokenSource.Plug` implements LiveKit's standard token endpoint, used by
@@ -276,10 +281,11 @@ join token without a room would be valid for every room.
 `:transport_error` or `:timeout`.
 
 Requests time out after 10 s by default (connect and receive; `timeout:` per client or per
-call). Connection errors and HTTP 502/503/504 are retried up to 3 times with exponential backoff,
-using the same request id. Calls whose repetition has side effects (dialing, starting egress,
-sending data, creating ingresses/trunks/rules/dispatches, moving participants, purchasing
-numbers, ...) are never retried unless you pass `retry: true`.
+call). Connection errors that are not timeouts, and HTTP 502/503/504, are retried up to 3 times
+with exponential backoff, using the same request id. Calls whose repetition has side effects
+(dialing, starting egress, updating egress streams, sending data, creating
+ingresses/trunks/rules/dispatches, moving participants, purchasing numbers, ...) are never
+retried unless you pass `retry: true`.
 Configure with `retry: false` or `retry: [max_attempts: 5, base_delay: 100]`.
 
 ## Telemetry

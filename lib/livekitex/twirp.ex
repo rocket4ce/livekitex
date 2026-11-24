@@ -8,15 +8,16 @@ defmodule Livekitex.Twirp do
 
   ## Retries
 
-  Transport errors other than timeouts and HTTP 502/503/504 are retried. The default
-  policy is 3 attempts with exponential backoff starting at 200 ms (plus jitter), and the
-  same `x-livekit-request-id` header is sent on every attempt.
+  Two kinds of failure are retried: HTTP 502, 503 and 504, and transport errors that are
+  not timeouts (a timeout may have been processed by LiveKit already). The default policy
+  is 3 attempts with exponential backoff starting at 200 ms (plus jitter), and the same
+  `x-livekit-request-id` header is sent on every attempt.
 
   A connection can fail after LiveKit already processed the request, so a retried
   delete may report `:not_found`. RPCs whose repetition has side effects (dialing SIP
-  calls, starting egress, sending data, creating ingresses, trunks, rules or dispatches,
-  moving or forwarding participants, purchasing phone numbers, ...) are never retried
-  unless the caller passes `retry: true` explicitly.
+  calls, starting egress, updating egress streams, sending data, creating ingresses,
+  trunks, rules or dispatches, moving or forwarding participants, purchasing phone
+  numbers, ...) are never retried unless the caller passes `retry: true` explicitly.
 
   The policy is set per client (`Livekitex.Client.new(retry: false)`) or per call
   (`retry: [max_attempts: 5, base_delay: 100]`).

@@ -48,7 +48,15 @@ defmodule Livekitex.Config do
 
   @runtime_key {__MODULE__, :runtime}
 
-  @doc "Returns the resolved configuration map."
+  @doc """
+  Returns the resolved configuration map.
+
+  > #### The map holds the API secret {: .warning}
+  >
+  > Unlike `Livekitex.Client`, this is a plain map with no `Inspect` protection, so
+  > `inspect/1` on it (in a log line, an error report or a crash dump) prints the
+  > secret. Read single values with `get/2` instead of dumping the whole map.
+  """
   @spec get() :: map()
   def get do
     runtime = :persistent_term.get(@runtime_key, %{})

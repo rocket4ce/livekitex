@@ -20,8 +20,8 @@ defmodule Livekitex.EgressService do
         file_outputs: [[filepath: "recordings/standup.mp4"]]
       )
 
-  `start_*` calls are never retried automatically (a retry could start a second
-  recording). Pass `retry: true` to override.
+  `start_*` calls and `update_stream/3` are never retried automatically (a retry could
+  start a second recording, or re-add a stream URL). Pass `retry: true` to override.
   """
 
   import Livekitex.Service
@@ -123,6 +123,10 @@ defmodule Livekitex.EgressService do
   Adds or removes stream output URLs of a running egress.
 
       update_stream(client, egress_id, add_output_urls: ["rtmp://..."], remove_output_urls: [])
+
+  `add_output_urls` does not deduplicate, so a retried call can report that the stream
+  already exists even though the first attempt succeeded. Not retried by default; pass
+  `retry: true` to override.
   """
   @spec update_stream(Client.t(), String.t(), keyword()) :: result(EgressInfo.t())
   def update_stream(client, egress_id, opts) do
@@ -137,7 +141,7 @@ defmodule Livekitex.EgressService do
       fields,
       EgressInfo,
       @grants,
-      call_opts
+      no_retry(call_opts)
     )
   end
 

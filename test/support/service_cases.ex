@@ -138,10 +138,11 @@ defmodule Livekitex.ServiceCases do
       {"update_layout", &EgressService.update_layout(&1, "EG_1", "grid"), "Egress/UpdateLayout",
        LK.UpdateLayoutRequest, %{egress_id: "EG_1", layout: "grid"}, @record, %LK.EgressInfo{},
        {:ok, %LK.EgressInfo{}}, true},
+      # add_output_urls does not deduplicate: a retry could re-add a stream.
       {"update_stream", &EgressService.update_stream(&1, "EG_1", add_output_urls: ["rtmp://x"]),
        "Egress/UpdateStream", LK.UpdateStreamRequest,
        %{egress_id: "EG_1", add_output_urls: ["rtmp://x"]}, @record, %LK.EgressInfo{},
-       {:ok, %LK.EgressInfo{}}, true},
+       {:ok, %LK.EgressInfo{}}, false},
       {"list_egress", &EgressService.list_egress(&1, room_name: "r1", active: true),
        "Egress/ListEgress", LK.ListEgressRequest, %{room_name: "r1", active: true}, @record,
        %LK.ListEgressResponse{

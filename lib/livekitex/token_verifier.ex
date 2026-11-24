@@ -90,9 +90,12 @@ defmodule Livekitex.TokenVerifier do
 
       verify_permissions(verifier, jwt, video: [room_join: true, room: "r"], sip: [call: true])
 
-  A flat keyword list is treated as video permissions:
+  A flat keyword list is treated as video permissions, including the keys that are
+  also group names (`agent` is both a `VideoGrant` field and a grant group):
 
-      verify_permissions(verifier, jwt, room_join: true)
+      verify_permissions(verifier, jwt, room_join: true, agent: true)
+
+  A list is read as a group only when every value is itself a list of permissions.
 
   Omitted video permissions use LiveKit's defaults (`can_publish` and
   `can_subscribe` default to `true`, `can_publish_data` follows `can_publish`,
@@ -102,10 +105,7 @@ defmodule Livekitex.TokenVerifier do
   @spec verify_permissions(t(), String.t(), keyword()) ::
           {:ok, ClaimGrant.t()} | {:error, error() | {:missing_permissions, keyword()}}
   def verify_permissions(%__MODULE__{} = verifier, token, required) do
-    required =
-      if Enum.all?(required, fn {key, _} -> key in @groups end),
-        do: required,
-        else: [video: required]
+    required = if grouped?(required), do: required, else: [video: required]
 
     with {:ok, grant} <- verify(verifier, token) do
       missing =
@@ -116,6 +116,17 @@ defmodule Livekitex.TokenVerifier do
 
       if missing == [], do: {:ok, grant}, else: {:error, {:missing_permissions, missing}}
     end
+  end
+
+  # `[video: [...], sip: [...]]` is a grouped list; `[room_join: true, agent: true]` is not.
+  # A group name only counts as such when its value is a list of permissions, so a flat
+  # `agent: true` stays a video permission instead of being read as the agent grant.
+  defp grouped?(required) do
+    required != [] and
+      Enum.all?(required, fn
+        {key, perms} -> key in @groups and is_list(perms)
+        _ -> false
+      end)
   end
 
   # LiveKit defaults for omitted video permissions.

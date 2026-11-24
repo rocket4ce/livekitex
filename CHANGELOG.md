@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.2.1 (2026-11-24)
+
+Hardening release from a full audit of 0.2.0. No API was removed or renamed; every change
+brings the code in line with what its documentation and typespecs already promised.
+
+### Fixed
+
+- `TokenVerifier.verify_permissions/3` raised `Protocol.UndefinedError` for a flat
+  `agent: true`, because `:agent` is both a grant group and a `VideoGrant` field. A keyword
+  list is now read as groups only when every value is itself a list of permissions, so
+  `verify_permissions(v, jwt, room_join: true, agent: true)` checks video permissions and
+  `verify_permissions(v, jwt, agent: [admin: true])` checks the agent grant.
+- `Webhook.receive_event/3` raised `ArgumentError` when no credentials were configured,
+  crashing the request inside `Webhook.Plug` instead of answering. It now returns
+  `{:error, :missing_credentials}` and the plug replies `401`.
+- `AccessToken.to_jwt/1` signed tokens LiveKit always rejects. It now returns
+  `{:error, :invalid_ttl}` for a non-positive `:ttl` (the token was expired the moment it
+  was signed) and `{:error, :missing_api_key}` when there is no API key.
+- `EgressService.update_stream/3` is no longer retried by default: `add_output_urls` does
+  not deduplicate, so a retry after a dropped connection could report that the stream
+  already exists. Pass `retry: true` for the old behaviour.
+- `mix livekitex.gen.protos` deleted `lib/livekitex/proto` before running `protoc`, so a
+  failing `protoc` left the repository without its generated modules. Generation now happens
+  in a temporary directory and only replaces the output on success. The cloned upstream
+  checkout is also removed afterwards instead of being left in the system temp directory.
+- `AccessToken.put_grants/2` and the `set_*_grant/2` functions raised `FunctionClauseError`
+  or `Protocol.UndefinedError` on bad input; they now raise `ArgumentError` naming the
+  expected grants and types.
+
+### Documentation
+
+- `Livekitex.Config.get/0` and `Livekitex.config/0` warn that the returned map holds the API
+  secret and, unlike `Livekitex.Client`, has no `Inspect` protection.
+- The retry section of `Livekitex.Twirp` and the README no longer read as if HTTP 502/503/504
+  were excluded from retries, and list `update_stream/3` among the calls that are not retried.
+- `Webhook.Plug` documents `401` for an endpoint with no credentials configured.
+
+### Internal
+
+- New `LivekitexTest` suite covering the top-level facade (`client/1`, `access_token/2`,
+  `room_join_token/3`, `admin_token/1`, `receive_webhook/3`, `config/0`, `configure/2`,
+  `version/0`), which had almost no coverage.
+- CI runs `mix dialyzer`; `credo` and `ex_doc` updated.
+
 ## 0.2.0 (2026-11-18)
 
 Breaking release that brings the SDK in line with livekit/protocol **v1.54.1**.

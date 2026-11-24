@@ -50,6 +50,7 @@ defmodule Livekitex.AccessToken do
         }
 
   @kinds ~w(standard ingress egress sip agent connector bridge)
+  @grant_groups [:video, :sip, :agent, :inference, :observability]
 
   @doc """
   Creates a new token.
@@ -111,11 +112,24 @@ defmodule Livekitex.AccessToken do
   @spec put_grants(t(), keyword()) :: t()
   def put_grants(%__MODULE__{} = token, grants) do
     Enum.reduce(grants, token, fn
-      {:video, g}, acc -> set_video_grant(acc, g)
-      {:sip, g}, acc -> set_sip_grant(acc, g)
-      {:agent, g}, acc -> set_agent_grant(acc, g)
-      {:inference, g}, acc -> set_inference_grant(acc, g)
-      {:observability, g}, acc -> set_observability_grant(acc, g)
+      {:video, g}, acc ->
+        set_video_grant(acc, g)
+
+      {:sip, g}, acc ->
+        set_sip_grant(acc, g)
+
+      {:agent, g}, acc ->
+        set_agent_grant(acc, g)
+
+      {:inference, g}, acc ->
+        set_inference_grant(acc, g)
+
+      {:observability, g}, acc ->
+        set_observability_grant(acc, g)
+
+      {other, _g}, _acc ->
+        raise ArgumentError,
+              "unknown grant #{inspect(other)}, expected one of #{inspect(@grant_groups)}"
     end)
   end
 
@@ -179,25 +193,36 @@ defmodule Livekitex.AccessToken do
   @doc """
   Signs the token. Returns `{:ok, jwt, claims}` or `{:error, reason}`.
 
-  Returns `{:error, :identity_required}` when the token grants `room_join` without an
-  identity.
+  Possible errors:
+
+    * `:missing_api_key` / `:missing_api_secret` - no credentials
+    * `:invalid_ttl` - the time-to-live is not a positive number of seconds; the token
+      would be expired the moment it is signed
+    * `:identity_required` - the token grants `room_join` without an identity
+    * `:sensitive_credentials` - see `:allow_sensitive_credentials` in `create/3`
   """
   @spec to_jwt(t()) :: {:ok, String.t(), map()} | {:error, term()}
   def to_jwt(%__MODULE__{} = token) do
+    with :ok <- validate(token), do: sign(token)
+  end
+
+  defp validate(token) do
     cond do
-      token.api_secret in [nil, ""] ->
-        {:error, :missing_api_secret}
-
-      joins_room?(token) and token.identity in [nil, ""] ->
-        {:error, :identity_required}
-
-      not token.allow_sensitive_credentials and sensitive?(token.grants.room_config) ->
-        {:error, :sensitive_credentials}
-
-      true ->
-        sign(token)
+      blank?(token.api_key) -> {:error, :missing_api_key}
+      blank?(token.api_secret) -> {:error, :missing_api_secret}
+      not valid_ttl?(token.ttl) -> {:error, :invalid_ttl}
+      joins_room?(token) and blank?(token.identity) -> {:error, :identity_required}
+      sensitive_not_allowed?(token) -> {:error, :sensitive_credentials}
+      true -> :ok
     end
   end
+
+  defp blank?(value), do: value in [nil, ""]
+
+  defp valid_ttl?(ttl), do: is_integer(ttl) and ttl > 0
+
+  defp sensitive_not_allowed?(token),
+    do: not token.allow_sensitive_credentials and sensitive?(token.grants.room_config)
 
   defp sign(token) do
     now = System.os_time(:second)
@@ -260,9 +285,19 @@ defmodule Livekitex.AccessToken do
   defp put_grant(%__MODULE__{grants: grants} = token, key, module, grant) do
     grant =
       case grant do
-        %^module{} -> grant
-        nil -> nil
-        opts when is_list(opts) or is_map(opts) -> module.new(Enum.to_list(opts))
+        %^module{} ->
+          grant
+
+        nil ->
+          nil
+
+        opts when is_list(opts) or (is_map(opts) and not is_struct(opts)) ->
+          module.new(Enum.to_list(opts))
+
+        other ->
+          raise ArgumentError,
+                "expected a #{inspect(module)}, a keyword list or a map for the " <>
+                  "#{inspect(key)} grant, got: #{inspect(other)}"
       end
 
     %{token | grants: Map.put(grants, key, grant)}

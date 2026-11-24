@@ -134,7 +134,12 @@ defmodule Livekitex do
   @spec version() :: String.t()
   def version, do: @version
 
-  @doc "Returns the resolved configuration."
+  @doc """
+  Returns the resolved configuration.
+
+  The map contains the API secret and has no `Inspect` protection; see
+  `Livekitex.Config.get/0`.
+  """
   defdelegate config, to: Config, as: :get
 
   @doc "Sets a runtime configuration override."

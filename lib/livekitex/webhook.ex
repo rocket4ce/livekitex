@@ -35,6 +35,7 @@ defmodule Livekitex.Webhook do
 
   @type error ::
           :missing_auth_header
+          | :missing_credentials
           | :invalid_issuer
           | :missing_sha256
           | :hash_mismatch
@@ -55,6 +56,9 @@ defmodule Livekitex.Webhook do
       may sign webhooks
     * `:leeway` - clock skew tolerance in seconds (default 60)
     * `:skip_auth` - only decode, without verifying. Never use this in production.
+
+  Returns `{:error, :missing_credentials}` when no credentials are configured, so an
+  unconfigured endpoint answers `401` instead of crashing the request.
   """
   @spec receive_event(binary(), String.t() | nil, keyword()) ::
           {:ok, WebhookEvent.t()} | {:error, error()}
@@ -129,10 +133,10 @@ defmodule Livekitex.Webhook do
         api_secret = opts[:api_secret] || Config.get(:api_secret)
 
         if api_key in [nil, ""] or api_secret in [nil, ""] do
-          raise ArgumentError, "LiveKit api_key and api_secret are required to verify webhooks"
+          {:error, :missing_credentials}
+        else
+          {:ok, api_key, api_secret}
         end
-
-        {:ok, api_key, api_secret}
     end
   end
 

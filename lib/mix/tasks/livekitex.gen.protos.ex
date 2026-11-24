@@ -54,13 +54,29 @@ defmodule Mix.Tasks.Livekitex.Gen.Protos do
     end
 
     tag = opts[:tag] || @protos_dir |> Path.join("VERSION") |> File.read!() |> String.trim()
-    source = opts[:source] || clone(tag)
 
+    case opts[:source] do
+      nil ->
+        clone = clone(tag)
+
+        try do
+          regenerate(Path.join(clone, "protobufs"), tag)
+        after
+          File.rm_rf(clone)
+        end
+
+      source ->
+        regenerate(source, tag)
+    end
+
+    Mix.shell().info("Generated #{@out_dir} from livekit/protocol #{tag}")
+  end
+
+  defp regenerate(source, tag) do
     copy_protos(source)
     File.write!(Path.join(@protos_dir, "VERSION"), tag <> "\n")
     generate()
     Mix.Task.run("format", [Path.join(@out_dir, "**/*.ex")])
-    Mix.shell().info("Generated #{@out_dir} from livekit/protocol #{tag}")
   end
 
   defp clone(tag) do
@@ -78,7 +94,7 @@ defmodule Mix.Tasks.Livekitex.Gen.Protos do
         stderr_to_stdout: true
       )
 
-    Path.join(dir, "protobufs")
+    dir
   end
 
   defp copy_protos(source) do
@@ -89,27 +105,38 @@ defmodule Mix.Tasks.Livekitex.Gen.Protos do
     end
   end
 
+  # protoc runs into a temporary directory first: a failure must not leave the
+  # repository without its generated modules.
   defp generate do
-    File.rm_rf!(@out_dir)
     tmp = Path.join(System.tmp_dir!(), "livekitex-gen-#{System.unique_integer([:positive])}")
     File.mkdir_p!(tmp)
 
-    include = google_include()
+    try do
+      include = google_include()
 
-    args =
-      ["-I", @protos_dir] ++
-        if(include, do: ["-I", include], else: []) ++
-        ["--elixir_out=package_prefix=livekitex.proto,include_docs=true:#{tmp}"] ++
-        Enum.map(@files, &Path.join(@protos_dir, &1))
+      args =
+        ["-I", @protos_dir] ++
+          if(include, do: ["-I", include], else: []) ++
+          ["--elixir_out=package_prefix=livekitex.proto,include_docs=true:#{tmp}"] ++
+          Enum.map(@files, &Path.join(@protos_dir, &1))
 
-    case System.cmd("protoc", args, stderr_to_stdout: true) do
-      {_, 0} -> :ok
-      {output, status} -> Mix.raise("protoc failed (#{status}):\n#{output}")
+      case System.cmd("protoc", args, stderr_to_stdout: true) do
+        {_, 0} -> :ok
+        {output, status} -> Mix.raise("protoc failed (#{status}):\n#{output}")
+      end
+
+      generated = Path.join(tmp, "livekitex/proto")
+
+      unless File.dir?(generated) do
+        Mix.raise("protoc produced no output in #{generated}")
+      end
+
+      File.rm_rf!(@out_dir)
+      File.mkdir_p!(Path.dirname(@out_dir))
+      File.cp_r!(generated, @out_dir)
+    after
+      File.rm_rf(tmp)
     end
-
-    File.mkdir_p!(Path.dirname(@out_dir))
-    File.cp_r!(Path.join(tmp, "livekitex/proto"), @out_dir)
-    File.rm_rf!(tmp)
   end
 
   # protoc ships google/protobuf/*.proto next to its binary (e.g. /opt/homebrew/include).

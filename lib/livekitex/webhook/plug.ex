@@ -33,7 +33,8 @@ defmodule Livekitex.Webhook.Plug do
 
     * `200` - event verified and handled
     * `400` - body is not a valid webhook event
-    * `401` - signature, issuer, expiry or body hash check failed
+    * `401` - signature, issuer, expiry or body hash check failed, or no credentials
+      are configured
     * `405` - not a `POST`
     * `413` - body exceeds `:max_body_length`
     * `500` - the handler returned `{:error, _}`
